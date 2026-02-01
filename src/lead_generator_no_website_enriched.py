@@ -42,6 +42,8 @@ def safe_get(url, **kwargs):
 def run_places_search(queries):
     if not GOOGLE_PLACES_API_KEY: raise EnvironmentError("GOOGLE_PLACES_API_KEY missing")
     out=[]
+    print("\nDebug — first 5 queries:", queries[:5])
+    print("Total queries generated:", len(queries))
     for q in queries:
         r=safe_get("https://maps.googleapis.com/maps/api/place/textsearch/json",
                    params={"query":q,"key":GOOGLE_PLACES_API_KEY},timeout=10)
