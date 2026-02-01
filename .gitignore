@@ -1,0 +1,15 @@
+# ignore sensitive and transient files
+*.log
+*.csv
+*.json
+*.env
+*.pyc
+__pycache__/
+api_cache.csv
+lead_history.csv
+daily_run_error.log
+daily_run.log
+run_leads.sh
+cache_manager.py
+.env
+.env.*
