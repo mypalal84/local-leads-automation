@@ -1,15 +1,21 @@
-# ignore sensitive and transient files
-*.log
-*.csv
-*.json
-*.env
-*.pyc
-__pycache__/
-api_cache.csv
-lead_history.csv
-daily_run_error.log
-daily_run.log
-run_leads.sh
-cache_manager.py
+# Environment and API keys
 .env
 .env.*
+
+# Logs and runtime files
+logs/
+*.log
+
+# Caching and history
+lead_history.csv
+api_cache.csv
+*.json
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# macOS / Editor
+.DS_Store
+.vscode/
+.idea/
