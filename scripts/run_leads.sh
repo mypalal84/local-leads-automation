@@ -10,5 +10,5 @@ export DAILY_LEAD_EMAIL_TO="your_gmail@gmail.com"
 
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   /Users/alexcahn/Scripts/src/Daily_Leads/src/lead_generator_no_website_enriched.py \
-  >> /Users/alexcahn/Scripts/src/Daily_Leads/src/logs/daily_run.log \
-  2>> /Users/alexcahn/Scripts/src/Daily_Leads/src/logs/daily_run_error.log
+  >> /Users/alexcahn/Scripts/src/Daily_Leads/logs/daily_run.log \
+  2>> /Users/alexcahn/Scripts/src/Daily_Leads/logs/daily_run_error.log
