@@ -9,10 +9,10 @@ from email import encoders
 # ================= CONFIG =================
 # Always locate towns_1000.csv relative to this script’s folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TOWNS_FILE = os.path.join(BASE_DIR, "towns_1000.csv")
+TOWNS_FILE = os.path.join(BASE_DIR, "..", "data", "towns_1000.csv")
 
 OUTPUT_DIR = BASE_DIR
-HISTORY_FILE = os.path.join(BASE_DIR, "lead_history.csv")
+HISTORY_FILE = os.path.join(BASE_DIR, "..", "data", "lead_history.csv")
 MAX_LEADS_PER_DAY = 50
 
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")

@@ -9,6 +9,6 @@ export DAILY_LEAD_EMAIL_PASS="your_app_password"
 export DAILY_LEAD_EMAIL_TO="your_gmail@gmail.com"
 
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
-  /Users/alexcahn/Scripts/Daily_Leads/lead_generator_no_website_enriched.py \
-  >> /Users/alexcahn/Scripts/Daily_Leads/daily_run.log \
-  2>> /Users/alexcahn/Scripts/Daily_Leads/daily_run_error.log
+  /Users/alexcahn/Scripts/Daily_Leads/src/lead_generator_no_website_enriched.py \
+  >> /Users/alexcahn/Scripts/Daily_Leads/src/daily_run.log \
+  2>> /Users/alexcahn/Scripts/Daily_Leads/src/daily_run_error.log
