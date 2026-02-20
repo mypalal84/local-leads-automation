@@ -39,7 +39,6 @@ SERVICES = [
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 key = GOOGLE_PLACES_API_KEY
-print(f"DEBUG | GOOGLE_PLACES_API_KEY (first 8 chars): {key[:8] if key else 'None'}")
 if not key:
     raise RuntimeError("❌ GOOGLE_PLACES_API_KEY not found in environment.")
 
@@ -116,7 +115,9 @@ def enrich_email(name, town):
                 for i in data.get("organic",[]): 
                     snippet=i.get("snippet","")+i.get("title","")
                     found+=re.findall(pattern,snippet)
-                if found: return ", ".join(dict.fromkeys(found)),"Serper"
+                if found: 
+                    print(f"🔁 Serper success for {name}")
+                    return ", ".join(dict.fromkeys(found)),"Serper"
             except Exception as e:
                 print(f"⚠️ Serper error for {name}: {e}"); break
 
