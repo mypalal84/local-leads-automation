@@ -1,136 +1,151 @@
-# Local Leads Automation
 
-Automated lead generation for local service businesses with no website (or weak web presence), plus optional outreach email support.
+⚡️ ZBA Digital — Local Leads Automation 🔥
+Python
+Automation
+Email
+APIs
+Status
 
-**Last updated:** February 21, 2026
+🧭 Overview
+ZBA Digital’s Daily Leads Pipeline automatically finds local small‑business owners who don’t have modern websites, verifies their contact emails, and sends one personalized cold email per day — all without manual intervention.
 
-## Overview
+🧱 End‑to‑End Flow:
+🔍 Discover new local business leads (via Serper API)
+✉️ Verify emails (Hunter.io)
+🤖 Send personalized cold emails with rotating subject lines
+📬 Track replies in Gmail and auto‑notify you
+Everything runs from your local cron scheduler each morning.
 
-This project helps identify local businesses and generate daily lead files for outbound outreach.
+🗂 Project Structure
+code
 
-Core workflow:
-
-1. Search for local businesses by town and service category.
-2. Enrich contact data (email/domain) through API lookups.
-3. Apply fallback email pattern guesses when enrichment is missing.
-4. Export dated CSV outputs.
-5. Optionally send summary/outreach emails.
-
-## Features
-
-- Automated lead discovery from configured towns/services.
-- Contact enrichment with API-backed lookups.
-- Fallback email pattern generation.
-- Daily CSV export files.
-- Optional scheduled execution via `launchd` (macOS) or cron.
-
-## Requirements
-
-- Python 3.10+
-- Dependencies from `requirements.txt`
-- API keys for your configured providers
-- Optional Gmail App Password for SMTP sending
-
-Install dependencies:
-
-```bash
-python3 -m pip install -r requirements.txt
-```
-
-## Quick Start
-
-1. Clone and enter the repo:
-
-```bash
-git clone https://github.com/<YOUR_USERNAME>/<YOUR_REPO>.git
-cd <YOUR_REPO>
-```
-
-2. Create your environment file:
-
-```bash
-cp .env.example .env
-```
-
-3. Update `.env` with your keys and email credentials.
-
-4. Run the lead generator:
-
-```bash
-python3 src/lead_generator_email.py
-```
-
-Or run via helper script:
-
-```bash
-bash scripts/run_leads.sh
-```
-
-## Environment Variables
-
-The code currently reads these variables:
-
-```env
-GOOGLE_API_KEY=...
-HUNTER_KEY=...
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_app_password
-```
-
-> Note: Keep `.env` private. Never commit real credentials.
-
-## Project Structure
-
-```text
-Daily_Leads/
-├── cleanup_daily_leads.sh
-├── requirements.txt
-├── data/
-│   ├── lead_history.csv
-│   └── towns_1000.csv
-├── logs/
-│   └── email_sent_YYYY-MM-DD.csv
-├── scripts/
-│   ├── examples.plist
-│   ├── run_leads.sh
-│   └── setup_env.sh
+/Scripts/Daily_Leads
+│
 ├── src/
-│   ├── lead_generator_email.py
-│   └── send_outreach_emails.py
-└── templates/
-            ├── intake_form.html
-            └── outreach_email.txt
-```
+│   ├── find_no_website_emails.py      # 🔍 find & enrich new leads
+│   ├── send_cold_emails.py            # ✉️ send cold emails + track replies
+│   ├── daily_summary_report.py        # 🧾 generate activity summaries
+│   └── utils/                         # helper functions (optional)
+│
+├── data/
+│   ├── no_website_emails_<town>_<service>_<date>.csv   # verified leads
+│   ├── sent_log.csv                  # all previously emailed contacts
+│   ├── replies.csv                   # archived incoming replies
+│   └── ...
+│
+├── logs/
+│   ├── summary.log
+│   └── email.log
+│
+└── .env                              # 🔑 environment variables
+⚙️ Environment Setup 🔧
+Create a file named .env in your project root directory:
 
-## Running on a Schedule
+env
 
-### macOS (`launchd`)
+# Gmail credentials (use App Passwords!)
+DAILY_LEAD_EMAIL_SENDER=yourname@gmail.com
+DAILY_LEAD_EMAIL_PASS=your_app_specific_password
 
-```bash
-cp scripts/examples.plist ~/Library/LaunchAgents/com.dailyleads.generator.plist
-launchctl load ~/Library/LaunchAgents/com.dailyleads.generator.plist
-launchctl list | grep dailyleads
-```
+# Fallback context (used only if filename parsing fails)
+DEFAULT_SERVICE=website
+DEFAULT_TOWN=Seattle
 
-### Cron (alternative)
+# API connections
+SERPER_API_KEY=your_serper_key
+HUNTER_API_KEY=your_hunter_key
 
-```bash
-0 8 * * * cd ~/Scripts/Daily_Leads/src && /usr/bin/python3 lead_generator_email.py >> ~/Scripts/Daily_Leads/logs/cron_leads.log 2>&1
-30 8 * * * cd ~/Scripts/Daily_Leads/src && /usr/bin/python3 send_outreach_emails.py >> ~/Scripts/Daily_Leads/logs/cron_outreach.log 2>&1
-```
+# Notifications
+REPLY_NOTIFY_TO=your_notification_email@domain.com
+🧠 Tip: If you use 2‑Factor Auth with Gmail, generate an App Password here → https://myaccount.google.com/apppasswords
 
-## Output
+📆 Automated Daily Schedule 🕒
+Example cronjobs (macOS / Linux):
 
-- Lead exports are written as dated CSV files in `src/`.
-- Historical tracking is kept in `data/lead_history.csv`.
-- Logs are written under `logs/`.
+bash
 
-## Security Notes
+# 7:00 AM → Discover & verify new leads
+0 7 * * * cd ~/Scripts/Daily_Leads/src && source ../.env \
+  && /usr/bin/python3 find_no_website_emails.py hvac seattle >> ../logs/summary.log 2>&1
 
-- Do not commit `.env` or credential files.
-- Use Gmail App Passwords instead of your primary login password.
-- Rotate API keys if you suspect leakage.
+# 7:30 AM → Send cold emails + fetch replies
+30 7 * * * cd ~/Scripts/Daily_Leads/src && source ../.env \
+  && /usr/bin/python3 send_cold_emails.py >> ../logs/email.log 2>&1
+✅ Fully hands‑off once scheduled!
 
-## License
+📨 Cold Email Template
+text
 
-MIT — see `LICENSE`.
+Hi {{business}},
+
+I came across {{business}} while checking {{service}} providers in {{town}}.
+I help local owners like you launch professional, mobile‑friendly websites that attract more calls — within 7 days.
+
+Is this something you’d be open to exploring for {{business}}?
+
+Best,
+Alex
+ZBA Digital
+www.zbadigital.com
+🎯 Smart Features
+💡 Dynamic tokens → business, town, service auto‑filled per lead
+🎲 Rotating subject lines for A/B testing (Quick question… | Website for… etc.)
+⏳ Random send delay (1–5 seconds) for human‑like pacing
+🔁 Reply Tracking & Notifications
+📬 Inbound replies are automatically processed through Gmail IMAP:
+
+Step	Action
+🧾 1
+Parse INBOX for replies from the past 7 days
+📓 2
+Log each sender, subject, and snippet → data/replies.csv
+🧹 3
+Remove those addresses from data/sent_log.csv
+📧 4
+Send you a notification email with a concise summary
+Example Email Notification:
+
+code
+
+Subject: [Pipeline] 2 new replies
+
+New replies detected:
+
+- john@evergreenhvac.com | Re: Quick question about Evergreen HVAC | "Hi Alex, let’s chat next week about pricing."…
+- info@blueflame.com | Re: Website for Blue Flame Heating? | "Sure – send me some examples!"…
+
+Total replied addresses: 2
+🧠 Core Scripts
+Script	Description
+find_no_website_emails.py
+🔍 Discovers local businesses with no website / outdated website, verifies emails via Serper and Hunter APIs.
+send_cold_emails.py
+✉️ Sends cold emails using dynamic fields, random subject rotation, and logs replies (+ auto‑cleanup + notifications).
+daily_summary_report.py
+📊 Generates a daily overview of lead counts and campaign performance.
+🗃 Data Outputs 📑
+File / Folder	Description
+data/no_website_emails_<town>_<service>_<date>.csv
+Verified contact list for that market segment
+data/sent_log.csv
+Rolling record of all recipients already emailed
+data/replies.csv
+Archived reply summaries (sender, subject, snippet, date)
+logs/
+Process and cron output logs
+🛡 Best Practices
+✨ Use App Passwords & enable Gmail IMAP
+📦 Rotate API keys every 90 days (Serper / Hunter)
+🗂 Archive old logs monthly to keep lightweight
+🚫 To pause outreach, comment out the second cronjob
+
+bash
+
+# pause cold emails
+# 30 7 * * * cd ~/Scripts/Daily_Leads/src ... send_cold_emails.py
+🧾 Version History 📅
+Date	Update
+2026‑02‑22
+Added subject rotation, random send delays, Gmail reply processing, automatic cleanup, and reply notification emails.
+❤️ Built by Alex Cahn / ZBA Digital — streamlining local lead generation through automation.
+
