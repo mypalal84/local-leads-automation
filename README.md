@@ -22,25 +22,33 @@ Everything runs from your local cron scheduler each morning.
 ## 🗂 Project Structure
 
 ```text
-/Scripts/Daily_Leads
+Daily_Leads/
+├── .env                         # API keys, Gmail app password, environment variables
+│
+├── logs/                        # Log outputs
+│   ├── summary.log              # Lead generation logs (per city/service)
+│   ├── email.log                # Sent emails + detected replies
+│   ├── pipeline.log             # Master cron execution log
+│   └── .pairs.tmp               # Auto‑generated, then removed
+│
+├── data/                        # Lead and contact data
+│   ├── no_website_emails_<city>_<service>_<date>.csv
+│   ├── sent_log.csv             # Prevent re‑sending to same address
+│   ├── replies.csv              # Stores detected replies
+│   └── archived/                # Optional backup folder for older CSVs
 │
 ├── src/
-│   ├── find_no_website_emails.py      # 🔍 find & enrich new leads
-│   ├── send_cold_emails.py            # ✉️ send cold emails + track replies
-│   ├── daily_summary_report.py        # 🧾 generate activity summaries
-│   └── utils/                         # helper functions (optional)
+│   ├── master_daily_pipeline.sh # 🚀 Main orchestrator (cron entry point)
+│   ├── find_no_website_emails.py# Lead discovery (Serper + Hunter)
+│   ├── send_cold_emails.py      # Outreach + reply handling
+│   └── utils/                   # Optional helper scripts
 │
-├── data/
-│   ├── no_website_emails_<town>_<service>_<date>.csv   # verified leads
-│   ├── sent_log.csv                   # all previously emailed contacts
-│   ├── replies.csv                    # archived incoming replies
-│   └── ...
-│
-├── logs/
-│   ├── summary.log
-│   └── email.log
-│
-└── .env                               # 🔑 environment variables
+└── archive/                     # Archived legacy scripts (safe to delete later)
+    ├── auto_daily_pipeline.py
+    ├── run_pipeline.sh
+    ├── daily_report_emailer.py
+    ├── lead_generator_email.py
+    └── filter_no_website.py                               # 🔑 environment variables
 ```
 
 ## ⚙️ Environment Setup 🔧
@@ -51,17 +59,11 @@ Create a file named `.env` in your project root directory:
 # Gmail credentials (use App Passwords!)
 DAILY_LEAD_EMAIL_SENDER=yourname@gmail.com
 DAILY_LEAD_EMAIL_PASS=your_app_specific_password
-
-# Fallback context (used only if filename parsing fails)
-DEFAULT_SERVICE=website
-DEFAULT_TOWN=Seattle
+REPLY_NOTIFY_TO="your_notification_address@gmail.com"
 
 # API connections
 SERPER_API_KEY=your_serper_key
 HUNTER_API_KEY=your_hunter_key
-
-# Notifications
-REPLY_NOTIFY_TO=your_notification_email@domain.com
 ```
 
 🧠 Tip: If you use 2-Factor Auth with Gmail, generate an App Password here: https://myaccount.google.com/apppasswords
@@ -70,14 +72,7 @@ REPLY_NOTIFY_TO=your_notification_email@domain.com
 
 Example cron jobs (macOS / Linux):
 
-```bash
-# 7:00 AM → Discover & verify new leads
-0 7 * * * cd ~/Scripts/Daily_Leads/src && source ../.env \
-  && /usr/bin/python3 find_no_website_emails.py hvac seattle >> ../logs/summary.log 2>&1
-
-# 7:30 AM → Send cold emails + fetch replies
-30 7 * * * cd ~/Scripts/Daily_Leads/src && source ../.env \
-  && /usr/bin/python3 send_cold_emails.py >> ../logs/email.log 2>&1
+```bash 0 7 * * * /Users/alexcahn/Scripts/Daily_Leads/src/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
 ```
 
 ✅ Fully hands-off once scheduled.
