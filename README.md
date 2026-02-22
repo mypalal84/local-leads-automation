@@ -72,7 +72,8 @@ HUNTER_API_KEY=your_hunter_key
 
 Example cron jobs (macOS / Linux):
 
-```bash 0 7 * * * /Users/alexcahn/Scripts/Daily_Leads/src/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
+```bash
+0 7 * * * /Users/alexcahn/Scripts/Daily_Leads/src/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
 ```
 
 ✅ Fully hands-off once scheduled.
