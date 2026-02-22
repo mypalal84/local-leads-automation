@@ -7,7 +7,7 @@ delay randomization, and reply‑based cleanup.
 ------------------------------------------------------
 """
 
-import os, smtplib, ssl, csv, time, random, imaplib, email, re
+import os, smtplib, ssl, csv, time, random, imaplib, email, re, sys
 from email.mime.text import MIMEText
 from email.header import decode_header
 from datetime import datetime, timedelta
@@ -90,11 +90,14 @@ def parse_context_from_filename(fname):
 # --------------------------------------------------
 # Core: send emails
 # --------------------------------------------------
-def send_cold_emails():
+def send_cold_emails(csv_file=None):
     sent = load_sent_log()
-    csv_file = find_latest_verified_file()
+    csv_file = csv_file or find_latest_verified_file()
     if not csv_file:
         print("[ERR] No verified leads file found.")
+        return
+    if not os.path.exists(csv_file):
+        print(f"[ERR] Provided leads file does not exist: {csv_file}")
         return
 
     town, service = parse_context_from_filename(csv_file)
@@ -233,4 +236,5 @@ def send_reply_notifications(replied_addresses):
 
 # --------------------------------------------------
 if __name__ == "__main__":
-    send_cold_emails()
+    target_csv = sys.argv[1] if len(sys.argv) > 1 else None
+    send_cold_emails(target_csv)
