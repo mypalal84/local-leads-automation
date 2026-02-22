@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ZBA Digital — 7‑Day Website Intake</title>
+  
+</head>
+<body>
+  <form name="zba-intake" id="zba-intake" action="#" method="POST">
+    <h1>Start Your Website&nbsp;—&nbsp;Takes 2 Minutes</h1>
+    <p>
+      Complete this quick form to check your eligibility for our 7‑Day Website Package.
+      Work begins only after intake + payment are confirmed.
+    </p>
+
+    <!-- Business Info -->
+    <fieldset>
+      <h2>Business Information</h2>
+
+      <label>Business Name *</label>
+      <input type="text" name="business_name" placeholder="Your business name" required>
+
+      <label>Your Name *</label>
+      <input type="text" name="your_name" placeholder="Your full name" required>
+
+      <label>Business Category *</label>
+      <select name="business_type" required>
+        <option value="">Select one</option>
+        <option>Plumber</option>
+        <option>Roofer</option>
+        <option>Electrician</option>
+        <option>HVAC</option>
+        <option>Cleaning Service</option>
+        <option>Landscaper</option>
+        <option>Handyman</option>
+        <option>Pest Control</option>
+        <option>Contractor</option>
+        <option>Painter</option>
+        <option>Tree Service</option>
+        <option>Solar Installer</option>
+        <option>Junk Removal</option>
+        <option>Other</option>
+      </select>
+
+      <label>Years in Business</label>
+      <select name="years">
+        <option value="">Select Option</option>
+        <option>0–1 year</option>
+        <option>2–5 years</option>
+        <option>6+ years</option>
+      </select>
+    </fieldset>
+
+    <!-- Contact Info -->
+    <fieldset>
+      <h2>Contact Information</h2>
+
+      <label>Phone *</label>
+      <input type="tel" name="phone" placeholder="(555) 555‑5555" required>
+
+      <label>Email *</label>
+      <input type="email" name="email" placeholder="you@business.com" required>
+
+      <label>Business Address *</label>
+      <input type="text" name="address" placeholder="123 Main St, City, State" required>
+
+      <label>Preferred Contact Method</label>
+      <select name="contact_method">
+        <option>Email</option>
+        <option>Text</option>
+        <option>Phone</option>
+      </select>
+    </fieldset>
+
+    <!-- Services -->
+    <fieldset>
+      <h2>Services & Coverage</h2>
+
+      <label>What services do you offer? *</label>
+      <textarea name="services" placeholder="List your main services" required></textarea>
+
+      <label>What areas do you serve? *</label>
+      <textarea name="areas" placeholder="e.g., Austin metro area, Travis County" required></textarea>
+    </fieldset>
+
+    <!-- Website / Brand -->
+    <fieldset>
+      <h2>Website & Brand Assets</h2>
+
+      <label>Do you currently have a website? *</label>
+      <select name="has_website" required>
+        <option value="">Select an option</option>
+        <option>Yes</option>
+        <option>No</option>
+      </select>
+
+      <label>Current Website URL (if applicable)</label>
+      <input type="url" name="current_website" placeholder="https://yourbusiness.com">
+
+      <label>Do you have a domain name? *</label>
+      <select name="has_domain" required>
+        <option value="">Select an option</option>
+        <option>Yes</option>
+        <option>No</option>
+      </select>
+
+      <label>Domain Name (if applicable)</label>
+      <input type="text" name="domain" placeholder="mybusiness.com">
+
+      <label>Do you have a logo?</label>
+      <select name="has_logo">
+        <option value="">Select an option</option>
+        <option>Yes</option>
+        <option>No</option>
+      </select>
+
+    </fieldset>
+
+    <!-- Eligibility -->
+    <fieldset>
+      <h2>Eligibility & Timeline</h2>
+
+      <label><input type="checkbox" name="agree_spec" required> I have read and agree to the 7‑Day Website Spec.</label>
+      <label><input type="checkbox" name="materials_ready" required> I can provide all required materials today (logo, copy, contact info).</label>
+
+      <label>When do you need your site live? *</label>
+      <select name="timeline" required>
+        <option value="">Select an option</option>
+        <option>ASAP (1-3 days)</option>
+        <option>Within 7 days</option>
+        <option>Just price‑checking</option>
+      </select>
+
+      <label>Additional Comments (optional)</label>
+      <textarea name="comments" placeholder="Share anything else we should know"></textarea>
+    </fieldset>
+
+    <!-- Submit -->
+    <button type="submit">Submit Intake Form</button>
+    <p><small>
+      After submitting, if we believe this is a fit, you’ll be emailed a secure Stripe Checkout link to complete your payment.
+      Once payment is confirmed, your 7‑day build timeline begins immediately.
+    </small></p>
+  </form>
+</body>
+</html>
