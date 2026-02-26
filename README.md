@@ -129,6 +129,12 @@ cd /Users/alexcahn/Scripts/Daily_Leads/src
 LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1 PIPELINE_DELAY_BETWEEN_RUNS=1 ./master_daily_pipeline.sh
 ```
 
+Suggested 3-day ramp:
+
+- Day 1: `LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1`
+- Day 2: `LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=2`
+- Day 3: keep threshold `2`, raise `DAILY_EMAIL_TARGET` only if bounce/complaint signals remain low
+
 ## 📨 Cold Email Template
 
 ```text
