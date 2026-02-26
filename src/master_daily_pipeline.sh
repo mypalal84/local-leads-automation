@@ -17,6 +17,21 @@ SRC_DIR="$BASE_DIR/src"
 LOG_DIR="$BASE_DIR/logs"
 ENV_FILE="$BASE_DIR/.env"
 DATA_DIR="$BASE_DIR/data"
+PROJECT_VENV_PY="$BASE_DIR/.venv/bin/python"
+WORKSPACE_VENV_PY="$HOME/Scripts/.venv/bin/python"
+
+if [[ -n "$VIRTUAL_ENV" && -x "$VIRTUAL_ENV/bin/python" ]]; then
+  PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+elif [[ -x "$PROJECT_VENV_PY" ]]; then
+  PYTHON_BIN="$PROJECT_VENV_PY"
+elif [[ -x "$WORKSPACE_VENV_PY" ]]; then
+  PYTHON_BIN="$WORKSPACE_VENV_PY"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3)"
+else
+  PYTHON_BIN="/usr/bin/python3"
+fi
+
 DAILY_EMAIL_TARGET="${DAILY_EMAIL_TARGET:-50}"
 ENRICH_BUFFER_MULTIPLIER="${ENRICH_BUFFER_MULTIPLIER:-2}"
 EXPECTED_SENDS_PER_PAIR="${EXPECTED_SENDS_PER_PAIR:-5}"
@@ -183,6 +198,7 @@ log "=== Starting Run ($TOTAL pairs) ===" | tee -a "$LOG_DIR/summary.log"
 cd "$SRC_DIR" || exit 1
 export PIPELINE_RUN_METRICS_FILE="$RUN_METRICS_FILE"
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
+log "[RUNTIME] PYTHON_BIN=$PYTHON_BIN" | tee -a "$LOG_DIR/summary.log"
 log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair=$EXPECTED_SENDS_PER_PAIR, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
@@ -204,7 +220,7 @@ while IFS='|' read -r service city; do
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping discovery command." | tee -a "$LOG_DIR/summary.log"
   else
-    if ! /usr/bin/python3 "$SRC_DIR/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+    if ! "$PYTHON_BIN" "$SRC_DIR/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
     fi
@@ -219,7 +235,7 @@ while IFS='|' read -r service city; do
     if (( enrich_limit < 1 )); then
       enrich_limit=1
     fi
-    if ! /usr/bin/python3 "$SRC_DIR/find_no_website_emails.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
+    if ! "$PYTHON_BIN" "$SRC_DIR/find_no_website_emails.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
     fi
@@ -239,7 +255,7 @@ while IFS='|' read -r service city; do
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping outreach command for $OUT_FILE" | tee -a "$LOG_DIR/email.log"
   else
-    if ! /usr/bin/python3 "$SRC_DIR/send_cold_emails.py" "$OUT_FILE" >>"$LOG_DIR/email.log" 2>&1; then
+    if ! "$PYTHON_BIN" "$SRC_DIR/send_cold_emails.py" "$OUT_FILE" >>"$LOG_DIR/email.log" 2>&1; then
       log "[ERR] Email send failed for $service | $city" | tee -a "$LOG_DIR/email.log"
     fi
   fi
@@ -268,7 +284,7 @@ fi
 echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},$lead_count,$sent_today_end,$remaining_quota_end" >> "$KPI_CSV"
 log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
 
-api_counts=$(/usr/bin/python3 - <<END
+api_counts=$("$PYTHON_BIN" - <<END
 import json, os
 path = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 data = {"google_places": 0, "serper": 0, "hunter": 0}
@@ -313,7 +329,7 @@ log "Sending Summary Email..." | tee -a "$LOG_DIR/summary.log"
 if [[ "$DRY_RUN" == "true" ]]; then
   log "[DRY] Skipping summary email send." | tee -a "$LOG_DIR/summary.log"
 else
-/usr/bin/python3 - <<END
+"$PYTHON_BIN" - <<END
 import os, smtplib, ssl
 from email.mime.text import MIMEText
 sender=os.getenv("DAILY_LEAD_EMAIL_SENDER")
