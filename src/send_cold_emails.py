@@ -16,6 +16,11 @@ from glob import glob
 import pandas as pd
 import dns.resolver
 
+try:
+    import certifi
+except Exception:
+    certifi = None
+
 # --------------------------------------------------
 # Load environment variables
 # --------------------------------------------------
@@ -367,7 +372,10 @@ def send_cold_emails(csv_file=None):
         return
 
     town, service = parse_context_from_filename(csv_file)
-    context = ssl.create_default_context()
+    if certifi is not None:
+        context = ssl.create_default_context(cafile=certifi.where())
+    else:
+        context = ssl.create_default_context()
 
     print(f"[INFO] Sending from file: {os.path.basename(csv_file)} ({town}, {service})")
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
