@@ -214,6 +214,35 @@ The suite includes:
 
 CI runs the same suite on push and pull request via `.github/workflows/tests.yml`.
 
+## 🚀 Go-Live Ramp Plan
+
+Use a staged rollout to protect sender reputation while the domain warms up.
+
+### Week 1 (stability mode)
+
+```env
+DAILY_EMAIL_TARGET=10
+ENRICH_BUFFER_MULTIPLIER=2
+LEAD_SCORE_THRESHOLD=3
+MAX_EMAILS_PER_DOMAIN=1
+BLOCK_GENERIC_INBOXES=true
+PRE_SEND_VALIDATE_EMAILS=true
+CACHE_TTL_DAYS=7
+EXPECTED_SENDS_PER_PAIR=5
+MAX_PAIRS_PER_RUN=10
+```
+
+### Week 2+ (gradual scale)
+
+- Increase `DAILY_EMAIL_TARGET` slowly: `20` → `35` → `50`
+- Keep `MAX_EMAILS_PER_DOMAIN=1` until bounce/blocks remain low for several days
+
+### Daily health checks
+
+- `logs/daily_kpi.csv` → sent/replies/quota trend
+- `logs/email.log` → `[BOUNCE]`, `[VALIDATION]`, `[DOMAIN-CAP]`, `[SUPPRESS]`
+- `data/suppressions.csv` → ensure bounced/problematic addresses are being excluded
+
 ## 🛡 Best Practices
 
 - ✨ Use App Passwords and enable Gmail IMAP
