@@ -329,9 +329,15 @@ log "Sending Summary Email..." | tee -a "$LOG_DIR/summary.log"
 if [[ "$DRY_RUN" == "true" ]]; then
   log "[DRY] Skipping summary email send." | tee -a "$LOG_DIR/summary.log"
 else
-"$PYTHON_BIN" - <<END
+if "$PYTHON_BIN" - <<END
 import os, smtplib, ssl
 from email.mime.text import MIMEText
+
+try:
+    import certifi
+except Exception:
+    certifi = None
+
 sender=os.getenv("DAILY_LEAD_EMAIL_SENDER")
 password=os.getenv("DAILY_LEAD_EMAIL_PASS")
 receiver=os.getenv("REPLY_NOTIFY_TO", sender)
@@ -340,12 +346,18 @@ if sender and password:
     msg["Subject"]="[ZBA Digital] Daily Pipeline Summary"
     msg["From"]=sender
     msg["To"]=receiver
-    ctx=ssl.create_default_context()
+    if certifi is not None:
+        ctx=ssl.create_default_context(cafile=certifi.where())
+    else:
+        ctx=ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com",465,context=ctx) as s:
         s.login(sender,password)
         s.sendmail(sender,[receiver],msg.as_string())
 END
+  then
+    log "Summary Email Sent to $REPLY_NOTIFY_TO" | tee -a "$LOG_DIR/summary.log"
+  else
+    log "[WARN] Summary Email failed to send." | tee -a "$LOG_DIR/summary.log"
   fi
-
-log "Summary Email Sent to $REPLY_NOTIFY_TO" | tee -a "$LOG_DIR/summary.log"
+  fi
 log "Completed $(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$LOG_DIR/summary.log"
