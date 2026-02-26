@@ -6,6 +6,12 @@
 logs/
 *.log
 
+# Generated pipeline data
+data/leads_*.csv
+data/replies.csv
+data/sent_log.csv
+data/archive/
+
 # Caching and history
 lead_history.csv
 api_cache.csv
