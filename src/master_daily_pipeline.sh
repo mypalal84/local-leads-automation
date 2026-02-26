@@ -25,6 +25,14 @@ PIPELINE_DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-}"
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 DRY_RUN="${DRY_RUN:-false}"
 
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
+
 shopt -s nocasematch
 if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "yes" ]]; then
   DRY_RUN="true"
@@ -173,7 +181,6 @@ COUNT=0
 # Main loop -----------------------------------------------------------
 log "=== Starting Run ($TOTAL pairs) ===" | tee -a "$LOG_DIR/summary.log"
 cd "$SRC_DIR" || exit 1
-set -a; source "$ENV_FILE"; set +a
 export PIPELINE_RUN_METRICS_FILE="$RUN_METRICS_FILE"
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
