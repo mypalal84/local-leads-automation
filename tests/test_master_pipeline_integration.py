@@ -51,5 +51,10 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
     assert rows[0].startswith("date,timestamp,dry_run")
     assert ",true," in rows[-1]
 
+    fields = rows[-1].split(",")
+    pairs_selected = int(fields[3].strip())
+    # target=50 and default expected sends per pair=5 -> 10 selected pairs
+    assert pairs_selected == 10
+
     summary_log = (logs_dir / "summary.log").read_text(encoding="utf-8")
     assert "[KPI] Appended daily KPI row" in summary_log

@@ -73,3 +73,45 @@ def test_enrich_respects_max_leads_limit(tmp_path, monkeypatch):
 
     out_df = pd.read_csv(in_path)
     assert len(out_df) == 1
+
+
+def test_search_serper_uses_cache(tmp_path, monkeypatch):
+    cache_dir = pathlib.Path(tmp_path) / "cache"
+    cache_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(enrich_mod, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(enrich_mod, "SERPER", "test-serper-key")
+
+    calls = {"count": 0}
+
+    def fake_retry(func, *_args, **_kwargs):
+        calls["count"] += 1
+        return ["https://example.com"]
+
+    monkeypatch.setattr(enrich_mod, "retry_request", fake_retry)
+
+    q = "demo query"
+    assert enrich_mod.search_serper(q) == ["https://example.com"]
+    assert enrich_mod.search_serper(q) == ["https://example.com"]
+    assert calls["count"] == 1
+
+
+def test_hunter_lookup_uses_cache(tmp_path, monkeypatch):
+    cache_dir = pathlib.Path(tmp_path) / "cache"
+    cache_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(enrich_mod, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(enrich_mod, "HUNTER", "test-hunter-key")
+
+    calls = {"count": 0}
+
+    def fake_retry(func, *_args, **_kwargs):
+        calls["count"] += 1
+        return ["owner@example.com"]
+
+    monkeypatch.setattr(enrich_mod, "retry_request", fake_retry)
+
+    domain = "example.com"
+    assert enrich_mod.hunter_email_lookup(domain) == ["owner@example.com"]
+    assert enrich_mod.hunter_email_lookup(domain) == ["owner@example.com"]
+    assert calls["count"] == 1

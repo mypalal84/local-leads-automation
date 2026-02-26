@@ -14,12 +14,14 @@ Purpose:
 import os
 import re
 import time
+import json
+import hashlib
 import requests
 import pandas as pd
 import traceback
 from urllib.parse import urlparse
 from dotenv import load_dotenv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 # ======================================================
 # ENVIRONMENT SETUP
@@ -30,7 +32,10 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 BASE_DIR = os.path.expanduser("~/Scripts/Daily_Leads")
 DATA_DIR = os.path.join(BASE_DIR, "data")
+CACHE_DIR = os.path.join(DATA_DIR, "cache")
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
+CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
 
 # ======================================================
 # AUTO‑ARCHIVE PREVIOUS DATA FILES
@@ -69,6 +74,39 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; ZBA-LeadBot/1.0; +https://zbadigital.com)"
 }
 
+
+def _cache_path(prefix: str, key: str) -> str:
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return os.path.join(CACHE_DIR, f"{prefix}_{digest}.json")
+
+
+def cache_get(prefix: str, key: str):
+    path = _cache_path(prefix, key)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        created = datetime.fromisoformat(payload.get("created_at", "1970-01-01T00:00:00"))
+        if datetime.now() - created > timedelta(days=CACHE_TTL_DAYS):
+            return None
+        return payload.get("value")
+    except Exception:
+        return None
+
+
+def cache_set(prefix: str, key: str, value):
+    path = _cache_path(prefix, key)
+    payload = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "value": value,
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
+
 # ======================================================
 # RETRY WRAPPER
 # ======================================================
@@ -93,6 +131,10 @@ def run_serper_search(query: str):
     if not SERPER:
         print("[ERROR] SERPER_API_KEY missing in .env.")
         return []
+
+    cached = cache_get("serper", query)
+    if cached is not None:
+        return cached
     
     def _call():
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
@@ -104,7 +146,9 @@ def run_serper_search(query: str):
         resp.raise_for_status()
         return resp.json().get("organic", [])
     
-    return retry_request(_call) or []
+    result = retry_request(_call) or []
+    cache_set("serper", query, result)
+    return result
 
 
 # ======================================================

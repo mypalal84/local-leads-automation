@@ -128,3 +128,13 @@ def test_append_to_suppressions_is_idempotent(tmp_path, monkeypatch):
 
     assert len(rows) == 1
     assert rows[0][0] == "same@example.com"
+
+
+def test_score_lead_prefers_business_domains():
+    row = {"name": "Acme Plumbing", "notes": "", "website": ""}
+    assert sce.score_lead(row, "owner@acmeplumbing.com") >= 3
+
+
+def test_score_lead_penalizes_existing_website():
+    row = {"name": "Acme Plumbing", "notes": "", "website": "https://acme.com"}
+    assert sce.score_lead(row, "owner@acmeplumbing.com") < 3

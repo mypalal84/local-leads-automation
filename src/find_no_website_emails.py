@@ -12,10 +12,10 @@ Purpose:
 ------------------------------------------------------
 """
 
-import os, re, time, requests, pandas as pd, traceback
+import os, re, time, json, hashlib, requests, pandas as pd, traceback
 from urllib.parse import urlparse
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ======================================================
 # ENV SETUP
@@ -27,13 +27,50 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_DIR = os.path.join(BASE_DIR, "data")
+CACHE_DIR = os.path.join(DATA_DIR, "cache")
 DATESTAMP = datetime.now().strftime("%Y-%m-%d")
+CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
+
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ZBA‑LeadBot/1.1)"}
 
 
 def sanitize_for_filename(value: str) -> str:
     return re.sub(r'[^A-Za-z0-9_]+', '_', str(value).strip()).strip('_')
+
+
+def _cache_path(prefix: str, key: str) -> str:
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return os.path.join(CACHE_DIR, f"{prefix}_{digest}.json")
+
+
+def cache_get(prefix: str, key: str):
+    path = _cache_path(prefix, key)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        created = datetime.fromisoformat(payload.get("created_at", "1970-01-01T00:00:00"))
+        if datetime.now() - created > timedelta(days=CACHE_TTL_DAYS):
+            return None
+        return payload.get("value")
+    except Exception:
+        return None
+
+
+def cache_set(prefix: str, key: str, value):
+    path = _cache_path(prefix, key)
+    payload = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "value": value,
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
 
 # ======================================================
 # RETRY WRAPPER
@@ -60,6 +97,9 @@ def retry_request(func, *args, **kwargs):
 def search_serper(query):
     if not SERPER:
         return []
+    cached = cache_get("serper", query)
+    if cached is not None:
+        return cached
     def _call():
         payload = {"q": query, "num": 5}
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
@@ -68,7 +108,9 @@ def search_serper(query):
         r.raise_for_status()
         data = r.json().get("organic", [])
         return [x.get("link") for x in data if x.get("link")]
-    return retry_request(_call) or []
+    result = retry_request(_call) or []
+    cache_set("serper", query, result)
+    return result
 
 # ======================================================
 # WEBSITE CHECK — small HEAD request
@@ -91,6 +133,9 @@ def has_live_website(domain):
 def hunter_email_lookup(domain):
     if not (HUNTER and domain):
         return []
+    cached = cache_get("hunter", domain)
+    if cached is not None:
+        return cached
     def _call():
         r = requests.get("https://api.hunter.io/v2/domain-search",
                          params={"domain": domain, "api_key": HUNTER},
@@ -98,7 +143,9 @@ def hunter_email_lookup(domain):
         r.raise_for_status()
         emails = r.json().get("data", {}).get("emails", [])
         return [e.get("value") for e in emails if e.get("value")]
-    return retry_request(_call) or []
+    result = retry_request(_call) or []
+    cache_set("hunter", domain, result)
+    return result
 
 # ======================================================
 # ENRICH MAIN

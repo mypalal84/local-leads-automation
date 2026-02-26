@@ -85,3 +85,29 @@ def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     assert list(df.columns) == ["name", "link", "website", "email", "notes"]
     assert len(df) == 1
     assert df.iloc[0]["name"] == "Good Lead"
+
+
+def test_run_serper_search_uses_cache(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    cache_dir = pathlib.Path(tmp_path) / "cache"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(module, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(module, "SERPER", "test-serper-key")
+
+    calls = {"count": 0}
+
+    def fake_retry(func, *_args, **_kwargs):
+        calls["count"] += 1
+        return [{"title": "Lead", "link": "https://example.com", "snippet": ""}]
+
+    monkeypatch.setattr(module, "retry_request", fake_retry)
+
+    query = "plumber denver"
+    first = module.run_serper_search(query)
+    second = module.run_serper_search(query)
+
+    assert first == second
+    assert calls["count"] == 1

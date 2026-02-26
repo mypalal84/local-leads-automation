@@ -2,8 +2,8 @@
 # ====================================================================
 # ZBA Digital - Master Daily Pipeline (ASCII Clean, Bash 5.3)
 # ====================================================================
-# • Randomly selects 3 services + 3 cities (multi-word safe)
-# • Pairs one service ↔ one city (3 jobs per run)
+# • Randomly selects dynamic service/city pairs (multi-word safe)
+# • Pair count adapts to remaining daily quota
 # • Runs Discovery → Enrichment → Outreach
 # • Sends daily summary email
 # ====================================================================
@@ -19,6 +19,8 @@ ENV_FILE="$BASE_DIR/.env"
 DATA_DIR="$BASE_DIR/data"
 DAILY_EMAIL_TARGET="${DAILY_EMAIL_TARGET:-50}"
 ENRICH_BUFFER_MULTIPLIER="${ENRICH_BUFFER_MULTIPLIER:-2}"
+EXPECTED_SENDS_PER_PAIR="${EXPECTED_SENDS_PER_PAIR:-5}"
+MAX_PAIRS_PER_RUN="${MAX_PAIRS_PER_RUN:-15}"
 PIPELINE_DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-}"
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -101,8 +103,39 @@ CITIES=(
 )
 
 # Random selection ----------------------------------------------------
-readarray -t SEL_SERVICES < <(printf "%s\n" "${SERVICES[@]}" | sort -R | head -n 3)
-readarray -t SEL_CITIES   < <(printf "%s\n" "${CITIES[@]}"   | sort -R | head -n 3)
+sent_today_start=$(today_sent_count)
+remaining_at_start=$((DAILY_EMAIL_TARGET - sent_today_start))
+if (( remaining_at_start < 0 )); then
+  remaining_at_start=0
+fi
+
+if (( EXPECTED_SENDS_PER_PAIR < 1 )); then
+  EXPECTED_SENDS_PER_PAIR=1
+fi
+if (( MAX_PAIRS_PER_RUN < 1 )); then
+  MAX_PAIRS_PER_RUN=1
+fi
+
+target_pairs=$(( (remaining_at_start + EXPECTED_SENDS_PER_PAIR - 1) / EXPECTED_SENDS_PER_PAIR ))
+if (( target_pairs < 1 )); then
+  target_pairs=1
+fi
+
+pair_count=$target_pairs
+if (( pair_count > MAX_PAIRS_PER_RUN )); then
+  pair_count=$MAX_PAIRS_PER_RUN
+fi
+if (( pair_count > ${#SERVICES[@]} )); then
+  pair_count=${#SERVICES[@]}
+fi
+if (( pair_count > ${#CITIES[@]} )); then
+  pair_count=${#CITIES[@]}
+fi
+
+readarray -t SHUF_SERVICES < <(printf "%s\n" "${SERVICES[@]}" | sort -R)
+readarray -t SHUF_CITIES   < <(printf "%s\n" "${CITIES[@]}"   | sort -R)
+SEL_SERVICES=("${SHUF_SERVICES[@]:0:$pair_count}")
+SEL_CITIES=("${SHUF_CITIES[@]:0:$pair_count}")
 
 echo "=== Today's Random Selections ===" | tee -a "$LOG_DIR/summary.log"
 
@@ -117,7 +150,7 @@ echo "=== Today's Random Selections ===" | tee -a "$LOG_DIR/summary.log"
 
 PAIR_FILE="$LOG_DIR/.pairs.tmp"
 > "$PAIR_FILE"
-for i in {0..2}; do
+for (( i=0; i<pair_count; i++ )); do
   printf "%s|%s\n" "${SEL_SERVICES[$i]}" "${SEL_CITIES[$i]}" >> "$PAIR_FILE"
 done
 
@@ -136,6 +169,7 @@ set -a; source "$ENV_FILE"; set +a
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
+log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair=$EXPECTED_SENDS_PER_PAIR, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
 
 while IFS='|' read -r service city; do
   sent_today=$(today_sent_count)

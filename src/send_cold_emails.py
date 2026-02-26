@@ -33,11 +33,15 @@ REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
 SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
 DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
+LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
 DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{datetime.now().strftime('%Y-%m-%d')}.csv")
 NEGATIVE_REPLY_KEYWORDS = [
     "unsubscribe", "stop", "remove", "do not contact", "don't contact",
     "not interested", "no thanks", "no thank you", "wrong email", "spam"
 ]
+FREE_EMAIL_DOMAINS = {
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"
+}
 
 # --------------------------------------------------
 # Message templates
@@ -151,6 +155,30 @@ def parse_context_from_filename(fname):
         return town.replace("-", " ").replace("_", " ").title(), service.replace("-", " ").replace("_", " ")
     return "Your Town", "Your Service"
 
+
+def score_lead(row, email_field):
+    score = 0
+    business = str(row.get("name", "")).strip()
+    notes = str(row.get("notes", "")).lower()
+    website = str(row.get("website", "")).strip()
+
+    if email_field and "@" in email_field:
+        score += 1
+        domain = email_field.split("@")[-1].lower()
+        if domain not in FREE_EMAIL_DOMAINS:
+            score += 1
+
+    if len(business.split()) >= 2:
+        score += 1
+
+    if website:
+        score -= 2
+
+    if any(token in notes for token in ["under construction", "business.site", "no website"]):
+        score += 1
+
+    return score
+
 # --------------------------------------------------
 # Core: send emails
 # --------------------------------------------------
@@ -177,6 +205,7 @@ def send_cold_emails(csv_file=None):
 
     print(f"[INFO] Sending from file: {os.path.basename(csv_file)} ({town}, {service})")
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
+    print(f"[INFO] Lead score threshold: {LEAD_SCORE_THRESHOLD}")
 
     with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
         server.login(EMAIL_ADDR, EMAIL_PASS)
@@ -188,6 +217,11 @@ def send_cold_emails(csv_file=None):
                 if not email_field or email_field in sent or email_field in suppressed:
                     if email_field in suppressed:
                         print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
+                    continue
+
+                lead_score = score_lead(row, email_field)
+                if lead_score < LEAD_SCORE_THRESHOLD:
+                    print(f"[SCORE] Skipping {email_field} (score={lead_score}, threshold={LEAD_SCORE_THRESHOLD})")
                     continue
 
                 business = row.get("name","your company").strip()
