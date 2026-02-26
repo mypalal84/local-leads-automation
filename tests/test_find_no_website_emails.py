@@ -1,5 +1,7 @@
 import csv
+import json
 import pathlib
+from datetime import datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -115,3 +117,30 @@ def test_hunter_lookup_uses_cache(tmp_path, monkeypatch):
     assert enrich_mod.hunter_email_lookup(domain) == ["owner@example.com"]
     assert enrich_mod.hunter_email_lookup(domain) == ["owner@example.com"]
     assert calls["count"] == 1
+
+
+def test_prune_expired_cache_removes_old_files(tmp_path, monkeypatch):
+    cache_dir = pathlib.Path(tmp_path) / "cache"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(enrich_mod, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(enrich_mod, "CACHE_TTL_DAYS", 7)
+
+    old_file = cache_dir / "hunter_old.json"
+    fresh_file = cache_dir / "hunter_fresh.json"
+
+    old_payload = {
+        "created_at": (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds"),
+        "value": ["a@example.com"],
+    }
+    fresh_payload = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "value": ["b@example.com"],
+    }
+
+    old_file.write_text(json.dumps(old_payload), encoding="utf-8")
+    fresh_file.write_text(json.dumps(fresh_payload), encoding="utf-8")
+
+    removed = enrich_mod.prune_expired_cache()
+    assert removed == 1
+    assert not old_file.exists()
+    assert fresh_file.exists()

@@ -34,6 +34,10 @@ SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
 DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
 LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
+UNSUBSCRIBE_FOOTER = os.getenv(
+    "UNSUBSCRIBE_FOOTER",
+    "If you'd prefer not to hear from me again, reply STOP and I will remove you immediately.",
+)
 DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{datetime.now().strftime('%Y-%m-%d')}.csv")
 NEGATIVE_REPLY_KEYWORDS = [
     "unsubscribe", "stop", "remove", "do not contact", "don't contact",
@@ -179,6 +183,13 @@ def score_lead(row, email_field):
 
     return score
 
+
+def build_email_body(business, town, service):
+    base = BODY_TEMPLATE.format(business=business, town=town, service=service)
+    if UNSUBSCRIBE_FOOTER:
+        return f"{base}\n\n{UNSUBSCRIBE_FOOTER}"
+    return base
+
 # --------------------------------------------------
 # Core: send emails
 # --------------------------------------------------
@@ -226,7 +237,7 @@ def send_cold_emails(csv_file=None):
 
                 business = row.get("name","your company").strip()
                 subject = random.choice(SUBJECTS).format(business=business)
-                body = BODY_TEMPLATE.format(business=business, town=town, service=service)
+                body = build_email_body(business=business, town=town, service=service)
 
                 msg = MIMEText(body, "plain", "utf-8")
                 msg["Subject"], msg["From"], msg["To"] = subject, EMAIL_ADDR, email_field

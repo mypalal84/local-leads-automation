@@ -72,6 +72,32 @@ def cache_set(prefix: str, key: str, value):
     except Exception:
         pass
 
+
+def prune_expired_cache():
+    cutoff = datetime.now() - timedelta(days=CACHE_TTL_DAYS)
+    removed = 0
+    if not os.path.isdir(CACHE_DIR):
+        return removed
+    for name in os.listdir(CACHE_DIR):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(CACHE_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            created = datetime.fromisoformat(payload.get("created_at", "1970-01-01T00:00:00"))
+            if created < cutoff:
+                os.remove(path)
+                removed += 1
+        except Exception:
+            pass
+    if removed:
+        print(f"[CACHE] Pruned {removed} expired cache file(s).")
+    return removed
+
+
+prune_expired_cache()
+
 # ======================================================
 # RETRY WRAPPER
 # ======================================================

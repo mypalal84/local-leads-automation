@@ -138,3 +138,9 @@ def test_score_lead_prefers_business_domains():
 def test_score_lead_penalizes_existing_website():
     row = {"name": "Acme Plumbing", "notes": "", "website": "https://acme.com"}
     assert sce.score_lead(row, "owner@acmeplumbing.com") < 3
+
+
+def test_build_email_body_includes_unsubscribe_footer(monkeypatch):
+    monkeypatch.setattr(sce, "UNSUBSCRIBE_FOOTER", "Reply STOP to unsubscribe.")
+    body = sce.build_email_body("Acme", "Denver, CO", "Plumbing")
+    assert "Reply STOP to unsubscribe." in body
