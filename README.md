@@ -135,6 +135,13 @@ Suggested 3-day ramp:
 - Day 2: `LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=2`
 - Day 3: keep threshold `2`, raise `DAILY_EMAIL_TARGET` only if bounce/complaint signals remain low
 
+Rollback (strict week-1 defaults for one run):
+
+```bash
+cd /Users/alexcahn/Scripts/Daily_Leads/src
+LEAD_SCORE_THRESHOLD=3 MAX_PAIRS_PER_RUN=10 DAILY_EMAIL_TARGET=10 ./master_daily_pipeline.sh
+```
+
 ## 📨 Cold Email Template
 
 ```text
