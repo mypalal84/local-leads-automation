@@ -103,7 +103,7 @@ def hunter_email_lookup(domain):
 # ======================================================
 # ENRICH MAIN
 # ======================================================
-def enrich(service, town):
+def enrich(service, town, max_leads=None):
     try:
         safe_town = sanitize_for_filename(town)
         safe_service = sanitize_for_filename(service)
@@ -126,6 +126,13 @@ def enrich(service, town):
         if df.empty:
             print(f"[WARN] Empty CSV → {town}|{service}")
             return None
+
+        if max_leads is not None:
+            max_leads = max(int(max_leads), 0)
+            if max_leads == 0:
+                print("[INFO] max_leads=0; skipping enrichment work.")
+                return in_path
+            df = df.head(max_leads)
 
         enriched, skipped_site, found_emails = [], 0, 0
         print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} …")
@@ -200,4 +207,5 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: python3 find_no_website_emails.py <service> <city>")
     else:
-        enrich(sys.argv[1], sys.argv[2])
+        max_leads_arg = int(sys.argv[3]) if len(sys.argv) > 3 else None
+        enrich(sys.argv[1], sys.argv[2], max_leads=max_leads_arg)

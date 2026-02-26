@@ -31,6 +31,8 @@ DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 SENT_LOG = os.path.join(DATA_DIR, "sent_log.csv")
 REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
+DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
+DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{datetime.now().strftime('%Y-%m-%d')}.csv")
 
 # --------------------------------------------------
 # Message templates
@@ -68,6 +70,19 @@ def load_sent_log():
 def append_to_log(email):
     with open(SENT_LOG, "a", newline="") as f:
         csv.writer(f).writerow([email.lower()])
+
+def append_to_daily_log(email):
+    with open(DAILY_SENT_LOG, "a", newline="") as f:
+        csv.writer(f).writerow([email.lower()])
+
+def load_daily_sent_count():
+    if not os.path.exists(DAILY_SENT_LOG):
+        return 0
+    try:
+        with open(DAILY_SENT_LOG, newline="") as f:
+            return sum(1 for _ in csv.reader(f))
+    except Exception:
+        return 0
 
 def remove_from_log(replied_emails):
     if not os.path.exists(SENT_LOG): return
@@ -112,6 +127,13 @@ def parse_context_from_filename(fname):
 # --------------------------------------------------
 def send_cold_emails(csv_file=None):
     sent = load_sent_log()
+    already_sent_today = load_daily_sent_count()
+    remaining_quota = max(DAILY_EMAIL_TARGET - already_sent_today, 0)
+
+    if remaining_quota <= 0:
+        print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}). Skipping send.")
+        return
+
     csv_file = csv_file or find_latest_verified_file()
     if not csv_file:
         print("[ERR] No verified leads file found.")
@@ -124,6 +146,7 @@ def send_cold_emails(csv_file=None):
     context = ssl.create_default_context()
 
     print(f"[INFO] Sending from file: {os.path.basename(csv_file)} ({town}, {service})")
+    print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
 
     with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
         server.login(EMAIL_ADDR, EMAIL_PASS)
@@ -145,7 +168,12 @@ def send_cold_emails(csv_file=None):
                 try:
                     server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
                     append_to_log(email_field)
+                    append_to_daily_log(email_field)
+                    remaining_quota -= 1
                     print(f"[SENT] {business} → {email_field} | {subject}")
+                    if remaining_quota <= 0:
+                        print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
+                        break
                     time.sleep(random.uniform(1,5))
                 except Exception as e:
                     print(f"[ERR] {email_field}: {e}")

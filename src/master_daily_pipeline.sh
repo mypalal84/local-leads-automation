@@ -17,6 +17,8 @@ SRC_DIR="$BASE_DIR/src"
 LOG_DIR="$BASE_DIR/logs"
 ENV_FILE="$BASE_DIR/.env"
 DATA_DIR="$BASE_DIR/data"
+DAILY_EMAIL_TARGET="${DAILY_EMAIL_TARGET:-50}"
+ENRICH_BUFFER_MULTIPLIER="${ENRICH_BUFFER_MULTIPLIER:-2}"
 PIPELINE_DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-}"
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -35,6 +37,15 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 sanitize_for_filename() {
   echo "$1" | sed -E 's/[^A-Za-z0-9_]+/_/g; s/^_+//; s/_+$//'
+}
+
+today_sent_count() {
+  local daily_file="$DATA_DIR/daily_sent_$(date +%Y-%m-%d).csv"
+  if [[ -f "$daily_file" ]]; then
+    wc -l < "$daily_file" | awk '{print $1}'
+  else
+    echo 0
+  fi
 }
 
 # Services ------------------------------------------------------------
@@ -124,10 +135,19 @@ cd "$SRC_DIR" || exit 1
 set -a; source "$ENV_FILE"; set +a
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
+log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
 
 while IFS='|' read -r service city; do
+  sent_today=$(today_sent_count)
+  remaining_quota=$((DAILY_EMAIL_TARGET - sent_today))
+  if (( remaining_quota <= 0 )); then
+    log "[LIMIT] Daily target reached ($sent_today/$DAILY_EMAIL_TARGET). Stopping remaining pairs." | tee -a "$LOG_DIR/summary.log"
+    break
+  fi
+
   ((COUNT++))
   log "--- [$COUNT/$TOTAL] $service | $city ---" | tee -a "$LOG_DIR/summary.log"
+  log "[LIMIT] Remaining daily quota before pair: $remaining_quota" | tee -a "$LOG_DIR/summary.log"
 
   # Step 1: Discovery
   log "[DISCOVERY] Finding leads without websites -> $service | $city" | tee -a "$LOG_DIR/summary.log"
@@ -145,7 +165,11 @@ while IFS='|' read -r service city; do
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping enrichment command." | tee -a "$LOG_DIR/summary.log"
   else
-    if ! /usr/bin/python3 "$SRC_DIR/find_no_website_emails.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+    enrich_limit=$((remaining_quota * ENRICH_BUFFER_MULTIPLIER))
+    if (( enrich_limit < 1 )); then
+      enrich_limit=1
+    fi
+    if ! /usr/bin/python3 "$SRC_DIR/find_no_website_emails.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
     fi
