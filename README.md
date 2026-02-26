@@ -120,6 +120,15 @@ DAILY_EMAIL_TARGET=50 ENRICH_BUFFER_MULTIPLIER=2 ./master_daily_pipeline.sh
 
 Note: `master_daily_pipeline.sh` sources `.env` before scheduling/pair selection, so values like `DAILY_EMAIL_TARGET`, `EXPECTED_SENDS_PER_PAIR`, and `MAX_PAIRS_PER_RUN` are applied at startup. Inline env vars in the run command still override `.env` for that run.
 
+### Canary mode (controlled live send)
+
+Run a single-pair live canary with a slightly lower lead score threshold:
+
+```bash
+cd /Users/alexcahn/Scripts/Daily_Leads/src
+LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1 PIPELINE_DELAY_BETWEEN_RUNS=1 ./master_daily_pipeline.sh
+```
+
 ## 📨 Cold Email Template
 
 ```text
