@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from glob import glob
 import pandas as pd
+import dns.resolver
 
 # --------------------------------------------------
 # Load environment variables
@@ -31,9 +32,13 @@ DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 SENT_LOG = os.path.join(DATA_DIR, "sent_log.csv")
 REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
 SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
+PROCESSED_REPLY_IDS_FILE = os.path.join(DATA_DIR, "processed_reply_message_ids.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
 DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
 LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
+PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip().lower() in {"1", "true", "yes", "on"}
+MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
+BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If you'd prefer not to hear from me again, reply STOP and I will remove you immediately.",
@@ -46,6 +51,18 @@ NEGATIVE_REPLY_KEYWORDS = [
 FREE_EMAIL_DOMAINS = {
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"
 }
+EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+GENERIC_LOCAL_PARTS = {
+    "info", "admin", "support", "sales", "contact", "office", "hello", "team", "service", "customerservice"
+}
+AUTO_REPLY_SUBJECT_TOKENS = [
+    "automatic reply", "auto reply", "out of office", "ooo", "away from the office", "vacation"
+]
+DSN_SUBJECT_TOKENS = [
+    "delivery incomplete", "delivery status notification", "undeliverable", "failure notice",
+    "mail delivery subsystem", "delivery failure", "message blocked", "message not delivered"
+]
+MX_CACHE = {}
 
 # --------------------------------------------------
 # Message templates
@@ -121,11 +138,148 @@ def load_daily_sent_count():
     except Exception:
         return 0
 
+
+def load_daily_domain_counts():
+    counts = {}
+    if not os.path.exists(DAILY_SENT_LOG):
+        return counts
+    try:
+        with open(DAILY_SENT_LOG, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if not row:
+                    continue
+                email_addr = (row[0] or "").strip().lower()
+                if "@" not in email_addr:
+                    continue
+                domain = email_addr.split("@")[-1]
+                counts[domain] = counts.get(domain, 0) + 1
+    except Exception:
+        return counts
+    return counts
+
+
+def is_generic_inbox(email_addr):
+    email_addr = (email_addr or "").strip().lower()
+    if "@" not in email_addr:
+        return False
+    local_part = email_addr.split("@")[0]
+    return local_part in GENERIC_LOCAL_PARTS
+
 def remove_from_log(replied_emails):
     if not os.path.exists(SENT_LOG): return
     df = pd.read_csv(SENT_LOG, header=None, names=["email"])
     df = df[~df["email"].isin(replied_emails)]
     df.to_csv(SENT_LOG, header=False, index=False)
+
+
+def load_processed_message_ids():
+    if not os.path.exists(PROCESSED_REPLY_IDS_FILE):
+        return set()
+    with open(PROCESSED_REPLY_IDS_FILE, newline="", encoding="utf-8") as f:
+        rows = csv.reader(f)
+        return set(row[0].strip() for row in rows if row and row[0].strip())
+
+
+def append_processed_message_id(message_id):
+    message_id = (message_id or "").strip()
+    if not message_id:
+        return
+    with open(PROCESSED_REPLY_IDS_FILE, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([message_id])
+
+
+def is_auto_reply(msg, subject):
+    subject_lower = (subject or "").lower()
+    if any(token in subject_lower for token in AUTO_REPLY_SUBJECT_TOKENS):
+        return True
+
+    auto_submitted = (msg.get("Auto-Submitted", "") or "").strip().lower()
+    if auto_submitted and auto_submitted != "no":
+        return True
+
+    if msg.get("X-Autoreply") or msg.get("X-Autorespond"):
+        return True
+
+    precedence = (msg.get("Precedence", "") or "").strip().lower()
+    if precedence in {"bulk", "list", "junk", "auto_reply"}:
+        return True
+
+    return False
+
+
+def is_valid_email_syntax(email_addr):
+    return bool(EMAIL_REGEX.match((email_addr or "").strip()))
+
+
+def has_mx_record(domain):
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return False
+    if domain in MX_CACHE:
+        return MX_CACHE[domain]
+    try:
+        answers = dns.resolver.resolve(domain, "MX")
+        MX_CACHE[domain] = len(list(answers)) > 0
+    except Exception:
+        MX_CACHE[domain] = False
+    return MX_CACHE[domain]
+
+
+def should_send_to_email(email_addr):
+    email_addr = (email_addr or "").strip().lower()
+    if not is_valid_email_syntax(email_addr):
+        return False, "invalid_syntax"
+    domain = email_addr.split("@")[-1]
+    if not has_mx_record(domain):
+        return False, "no_mx"
+    return True, "ok"
+
+
+def is_delivery_status_notification(msg, subject):
+    subject_lower = (subject or "").lower()
+    if any(token in subject_lower for token in DSN_SUBJECT_TOKENS):
+        return True
+
+    from_lower = (msg.get("From", "") or "").lower()
+    if "mailer-daemon" in from_lower or "mail delivery subsystem" in from_lower:
+        return True
+
+    content_type = (msg.get_content_type() or "").lower()
+    if content_type == "multipart/report":
+        return True
+
+    return False
+
+
+def classify_bounce_type(subject, body_text):
+    text = f"{subject or ''} {body_text or ''}".lower()
+    if re.search(r"\b5\d\d\b|\b5\.\d\.\d\b", text):
+        return "hard"
+    if re.search(r"\b4\d\d\b|\b4\.\d\.\d\b", text):
+        return "soft"
+    return "unknown"
+
+
+def extract_bounced_recipient(msg, body_text):
+    body_text = body_text or ""
+    m = re.search(r"Final-Recipient:\s*rfc822;\s*([^\s>]+)", body_text, re.I)
+    if m:
+        return m.group(1).strip().lower()
+
+    m2 = re.search(r"(?:for|to)\s+<?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})>?", body_text, re.I)
+    if m2:
+        return m2.group(1).strip().lower()
+
+    for part in msg.walk() if msg.is_multipart() else [msg]:
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        text = decode_fragment(payload)
+        m3 = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
+        if m3:
+            return m3.group(0).strip().lower()
+
+    return ""
 
 def find_latest_verified_file():
     files = sorted(
@@ -197,6 +351,7 @@ def send_cold_emails(csv_file=None):
     sent = load_sent_log()
     suppressed = load_suppression_list()
     already_sent_today = load_daily_sent_count()
+    domain_send_counts = load_daily_domain_counts()
     remaining_quota = max(DAILY_EMAIL_TARGET - already_sent_today, 0)
 
     if remaining_quota <= 0:
@@ -217,6 +372,7 @@ def send_cold_emails(csv_file=None):
     print(f"[INFO] Sending from file: {os.path.basename(csv_file)} ({town}, {service})")
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
     print(f"[INFO] Lead score threshold: {LEAD_SCORE_THRESHOLD}")
+    print(f"[INFO] Domain cap: {MAX_EMAILS_PER_DOMAIN} | Block generic inboxes: {BLOCK_GENERIC_INBOXES}")
 
     with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
         server.login(EMAIL_ADDR, EMAIL_PASS)
@@ -228,6 +384,21 @@ def send_cold_emails(csv_file=None):
                 if not email_field or email_field in sent or email_field in suppressed:
                     if email_field in suppressed:
                         print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
+                    continue
+
+                if BLOCK_GENERIC_INBOXES and is_generic_inbox(email_field):
+                    print(f"[GENERIC] Skipping generic inbox: {email_field}")
+                    continue
+
+                if PRE_SEND_VALIDATE_EMAILS:
+                    valid, reason = should_send_to_email(email_field)
+                    if not valid:
+                        print(f"[VALIDATION] Skipping {email_field} ({reason})")
+                        continue
+
+                domain = email_field.split("@")[-1]
+                if MAX_EMAILS_PER_DOMAIN > 0 and domain_send_counts.get(domain, 0) >= MAX_EMAILS_PER_DOMAIN:
+                    print(f"[DOMAIN-CAP] Skipping {email_field} (domain {domain} cap reached)")
                     continue
 
                 lead_score = score_lead(row, email_field)
@@ -246,6 +417,7 @@ def send_cold_emails(csv_file=None):
                     server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
                     append_to_log(email_field)
                     append_to_daily_log(email_field)
+                    domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
                     remaining_quota -= 1
                     print(f"[SENT] {business} → {email_field} | {subject}")
                     if remaining_quota <= 0:
@@ -285,6 +457,7 @@ def fetch_replies():
         ids = data[0].split()
         print(f"[INFO] Checking {len(ids)} recent messages for replies...")
         replied_addresses = set()
+        processed_ids = load_processed_message_ids()
 
         with open(REPLIES_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -292,20 +465,46 @@ def fetch_replies():
                 typ, msg_data = mail.fetch(i, "(RFC822)")
                 if typ != "OK": continue
                 msg = email.message_from_bytes(msg_data[0][1])
+                message_id = (msg.get("Message-ID", "") or "").strip()
+                if message_id and message_id in processed_ids:
+                    continue
 
                 frm = msg.get("From", "")
                 subject, enc = decode_header(msg.get("Subject",""))[0]
                 subject = decode_fragment(subject)
 
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        if part.get_content_type() == "text/plain":
+                            body = decode_fragment(part.get_payload(decode=True)[:1500]).replace("\n"," ")
+                            break
+                else:
+                    body = decode_fragment(msg.get_payload(decode=True))[:1500].replace("\n"," ")
+
+                if is_delivery_status_notification(msg, subject):
+                    bounced_email = extract_bounced_recipient(msg, body)
+                    bounce_type = classify_bounce_type(subject, body)
+                    if bounced_email:
+                        if bounce_type == "hard":
+                            append_to_suppressions(bounced_email, reason="delivery_failure_hard")
+                            print(f"[BOUNCE] Hard bounce suppressed: {bounced_email}")
+                        else:
+                            print(f"[BOUNCE] {bounce_type} bounce detected: {bounced_email} (not auto-suppressed)")
+                    continue
+
+                if is_auto_reply(msg, subject):
+                    if message_id:
+                        processed_ids.add(message_id)
+                        append_processed_message_id(message_id)
+                    continue
+
+                if message_id:
+                    processed_ids.add(message_id)
+                    append_processed_message_id(message_id)
+
                 if any(tok in subject.lower() for tok in ["question", "website", "mobile site", "call"]):
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                body = decode_fragment(part.get_payload(decode=True)[:150]).replace("\n"," ")
-                                break
-                    else:
-                        body = decode_fragment(msg.get_payload(decode=True))[:150].replace("\n"," ")
+                    body = body[:150]
                     date = msg.get("Date","")
                     writer.writerow([frm, subject, body, date])
                     reply_email = extract_email_address(frm)
