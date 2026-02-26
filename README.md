@@ -30,6 +30,7 @@ Daily_Leads/
 │   ├── summary.log              # Lead generation logs (per city/service)
 │   ├── email.log                # Sent emails + detected replies
 │   ├── daily_kpi.csv            # Daily KPI snapshots per pipeline run
+│   ├── run_metrics_<timestamp>.json # Per-run API call counters
 │   ├── pipeline.log             # Master cron execution log
 │   └── .pairs.tmp               # Auto‑generated, then removed
 │
@@ -39,6 +40,7 @@ Daily_Leads/
 │   ├── sent_log.csv             # Prevent re‑sending to same address
 │   ├── replies.csv              # Stores detected replies
 │   ├── suppressions.csv         # Never-send list (manual + auto-suppressed)
+│   ├── cache/                   # Cached Serper/Hunter responses (TTL-pruned)
 │   └── archive/                 # Archived lead CSV snapshots
 │
 ├── src/
@@ -50,7 +52,10 @@ Daily_Leads/
 │
 ├── tests/                       # Pytest suite (unit + dry-run integration)
 │
-└── archive/                     # Archived legacy scripts (safe to delete later)
+└── .github/workflows/
+    └── tests.yml                # CI: run pytest on push/PR
+
+archive/                         # Archived legacy scripts (safe to delete later)
     ├── auto_daily_pipeline.py
     ├── run_pipeline.sh
     ├── daily_report_emailer.py
@@ -71,6 +76,13 @@ REPLY_NOTIFY_TO="your_notification_address@gmail.com"
 # Pipeline controls
 DAILY_EMAIL_TARGET=50
 ENRICH_BUFFER_MULTIPLIER=2
+EXPECTED_SENDS_PER_PAIR=5
+MAX_PAIRS_PER_RUN=15
+LEAD_SCORE_THRESHOLD=2
+CACHE_TTL_DAYS=7
+
+# Optional footer appended to cold emails
+UNSUBSCRIBE_FOOTER="If you'd prefer not to hear from me again, reply STOP and I will remove you immediately."
 
 # API connections
 SERPER_API_KEY=your_serper_key
@@ -128,9 +140,14 @@ www.zbadigital.com
 - ⏳ Random send delay (1-5 seconds) for human-like pacing
 - 🎯 Daily send cap enforcement via `DAILY_EMAIL_TARGET`
 - 💸 Quota-aware enrichment to reduce API usage (`ENRICH_BUFFER_MULTIPLIER`)
+- 📊 Dynamic pair scheduling (`EXPECTED_SENDS_PER_PAIR`, `MAX_PAIRS_PER_RUN`)
+- ✅ Lead quality gate before send (`LEAD_SCORE_THRESHOLD`)
+- ♻️ Serper/Hunter cache with TTL pruning (`CACHE_TTL_DAYS`)
 - 🛑 Suppression list enforcement (`data/suppressions.csv`)
+- 📬 Unsubscribe footer support via `UNSUBSCRIBE_FOOTER`
 - 🔁 Reply tracking and notifications
 - 📈 Daily KPI snapshots written to `logs/daily_kpi.csv`
+- 🔢 Run-level API call totals (Google Places / Serper / Hunter) included in summary email
 
 ## 📬 Reply Tracking & Notifications
 
@@ -175,7 +192,9 @@ Total replied addresses: 2
 | `data/sent_log.csv` | Rolling record of all recipients already emailed |
 | `data/replies.csv` | Archived reply summaries (sender, subject, snippet, date) |
 | `data/suppressions.csv` | Suppressed addresses (manual and auto from negative replies) |
+| `data/cache/` | Cached API responses used to reduce repeat Serper/Hunter calls |
 | `logs/daily_kpi.csv` | Run-by-run KPIs: pairs, sent, replies, quota remaining |
+| `logs/run_metrics_<timestamp>.json` | Per-run API counters used in summary email |
 | `logs/` | Process and cron output logs |
 
 ## ✅ Testing
@@ -192,6 +211,8 @@ The suite includes:
 - Unit tests for sender, enrichment, discovery, and summary modules
 - Parameterized edge-case tests for filename and parsing behavior
 - Dry-run integration validation of master pipeline KPI output
+
+CI runs the same suite on push and pull request via `.github/workflows/tests.yml`.
 
 ## 🛡 Best Practices
 
@@ -213,6 +234,7 @@ The suite includes:
 | 2026-02-26 | Added dry-run mode, filename consistency fixes, and summary metric corrections. |
 | 2026-02-26 | Added daily send cap, quota-aware enrichment, suppression list support, and KPI logging. |
 | 2026-02-26 | Added pytest suite with unit and dry-run integration coverage. |
+| 2026-02-26 | Added dynamic pair scheduling, lead scoring, API caching/pruning, CI workflow, and API-call totals in summary email. |
 
 ---
 
