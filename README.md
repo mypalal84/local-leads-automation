@@ -32,16 +32,17 @@ Daily_Leads/
 │   └── .pairs.tmp               # Auto‑generated, then removed
 │
 ├── data/                        # Lead and contact data
-│   ├── no_website_emails_<city>_<service>_<date>.csv
+│   ├── leads_<city>_<service>_NO_WEBSITE_<date>.csv
 │   ├── sent_log.csv             # Prevent re‑sending to same address
 │   ├── replies.csv              # Stores detected replies
-│   └── archived/                # Optional backup folder for older CSVs
+│   └── archive/                 # Archived lead CSV snapshots
 │
 ├── src/
 │   ├── master_daily_pipeline.sh # 🚀 Main orchestrator (cron entry point)
-│   ├── find_no_website_emails.py# Lead discovery (Serper + Hunter)
+│   ├── discover_no_website_leads.py # Lead discovery (Serper)
+│   ├── find_no_website_emails.py# Lead enrichment (Serper + Hunter)
 │   ├── send_cold_emails.py      # Outreach + reply handling
-│   └── utils/                   # Optional helper scripts
+│   └── daily_summary_report.py  # Optional standalone summary mailer
 │
 └── archive/                     # Archived legacy scripts (safe to delete later)
     ├── auto_daily_pipeline.py
@@ -77,6 +78,15 @@ Example cron jobs (macOS / Linux):
 ```
 
 ✅ Fully hands-off once scheduled.
+
+### Dry-run (safe test mode)
+
+Run the full control flow without API calls or sending emails:
+
+```bash
+cd /Users/alexcahn/Scripts/Daily_Leads/src
+DRY_RUN=true PIPELINE_DELAY_BETWEEN_RUNS=1 ./master_daily_pipeline.sh
+```
 
 ## 📨 Cold Email Template
 
@@ -129,7 +139,8 @@ Total replied addresses: 2
 
 | Script | Description |
 | --- | --- |
-| `find_no_website_emails.py` | 🔍 Discovers local businesses with no website / outdated website, then verifies emails via Serper and Hunter APIs. |
+| `discover_no_website_leads.py` | 🔎 Finds likely no-website leads and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
+| `find_no_website_emails.py` | 🔍 Enriches discovery output, re-checks live websites, and verifies contact emails via Serper and Hunter APIs. |
 | `send_cold_emails.py` | ✉️ Sends cold emails using dynamic fields, rotating subject lines, and reply processing (auto-cleanup + notifications). |
 | `daily_summary_report.py` | 📊 Generates a daily overview of lead counts and campaign performance. |
 
@@ -137,7 +148,7 @@ Total replied addresses: 2
 
 | File / Folder | Description |
 | --- | --- |
-| `data/no_website_emails_<town>_<service>_<date>.csv` | Verified contact list for that market segment |
+| `data/leads_<city>_<service>_NO_WEBSITE_<date>.csv` | Discovery/enrichment output used by outreach |
 | `data/sent_log.csv` | Rolling record of all recipients already emailed |
 | `data/replies.csv` | Archived reply summaries (sender, subject, snippet, date) |
 | `logs/` | Process and cron output logs |

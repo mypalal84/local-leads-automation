@@ -76,15 +76,35 @@ def remove_from_log(replied_emails):
     df.to_csv(SENT_LOG, header=False, index=False)
 
 def find_latest_verified_file():
-    files = sorted(glob(os.path.join(DATA_DIR, "no_website_emails_*_*.csv")), reverse=True)
+    files = sorted(
+        glob(os.path.join(DATA_DIR, "leads_*_NO_WEBSITE_*.csv")) +
+        glob(os.path.join(DATA_DIR, "no_website_emails_*_*.csv")),
+        reverse=True,
+    )
     return files[0] if files else None
 
 def parse_context_from_filename(fname):
+    base = os.path.basename(fname)
+
+    m_leads = re.search(r"leads_(.+)_NO_WEBSITE_\d{4}-\d{2}-\d{2}", base)
+    if m_leads:
+        payload = m_leads.group(1)
+        parts = payload.split("_")
+        split_idx = None
+        for idx, token in enumerate(parts):
+            if len(token) == 2 and token.isalpha() and token == token.upper():
+                split_idx = idx + 1
+                break
+        if split_idx and split_idx < len(parts):
+            town = " ".join(parts[:split_idx]).replace("__", " ").replace("_", " ").strip()
+            service = " ".join(parts[split_idx:]).replace("__", " ").replace("_", " ").strip()
+            return town.title(), service
+
     # Expected pattern: no_website_emails_<town>_<service>_<DATE>.csv
-    m = re.search(r"no_website_emails_(.+)_(.+)_\d{4}-\d{2}-\d{2}", os.path.basename(fname))
+    m = re.search(r"no_website_emails_(.+)_(.+)_\d{4}-\d{2}-\d{2}", base)
     if m:
         town, service = m.groups()
-        return town.replace("-", " ").title(), service.replace("-", " ")
+        return town.replace("-", " ").replace("_", " ").title(), service.replace("-", " ").replace("_", " ")
     return "Your Town", "Your Service"
 
 # --------------------------------------------------

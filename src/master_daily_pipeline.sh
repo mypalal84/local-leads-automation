@@ -1,190 +1,222 @@
-#!/bin/bash
+#!/opt/homebrew/bin/bash
 # ====================================================================
-# 🚀 ZBA Digital - Master Daily Pipeline
-# --------------------------------------------------------------------
-# Multi-service / multi-city discovery + outreach automation.
-# Randomized order, safe throttling, organized logging, and
-# daily progress email summary (sent via Gmail SMTP).
+# ZBA Digital - Master Daily Pipeline (ASCII Clean, Bash 5.3)
+# ====================================================================
+# • Randomly selects 3 services + 3 cities (multi-word safe)
+# • Pairs one service ↔ one city (3 jobs per run)
+# • Runs Discovery → Enrichment → Outreach
+# • Sends daily summary email
 # ====================================================================
 
-# 🔧 CONFIG ------------------------------------------------------------
-BASE_DIR="/Users/alexcahn/Scripts/Daily_Leads"
+# Locale and paths ---------------------------------------------------
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+BASE_DIR="$HOME/Scripts/Daily_Leads"
 SRC_DIR="$BASE_DIR/src"
 LOG_DIR="$BASE_DIR/logs"
 ENV_FILE="$BASE_DIR/.env"
 DATA_DIR="$BASE_DIR/data"
+PIPELINE_DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-}"
+DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
+DRY_RUN="${DRY_RUN:-false}"
 
-# --------------------------------------------------------------------
-# 🔩 SERVICES — expand freely
-# --------------------------------------------------------------------
+shopt -s nocasematch
+if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "yes" ]]; then
+  DRY_RUN="true"
+else
+  DRY_RUN="false"
+fi
+shopt -u nocasematch
+
+mkdir -p "$LOG_DIR" "$DATA_DIR"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+
+sanitize_for_filename() {
+  echo "$1" | sed -E 's/[^A-Za-z0-9_]+/_/g; s/^_+//; s/_+$//'
+}
+
+# Services ------------------------------------------------------------
 SERVICES=(
-  "hvac" "roofing" "landscaping" "electrical" "plumbing"
-  "pest-control" "painting" "cleaning" "carpet-cleaning"
-  "fencing" "tree-service" "window-cleaning" "pressure-washing"
-  "remodeling" "flooring"
+"Plumbers" "Roofers" "Electricians" "Contractors / General Contractors"
+"Landscapers / Lawn Care" "HVAC / Heating & Cooling" "Pest Control"
+"Pool Maintenance / Repair" "Appliance Repair" "Handyman Services"
+"Window Cleaning" "Garage Door Services" "Fence Installation / Repair"
+"Carpet / Floor Cleaning" "Dentists" "Chiropractors" "Massage Therapists"
+"Physical Therapy Clinics" "Acupuncturists" "Personal Trainers / Fitness Coaches"
+"Yoga / Pilates Studios" "Martial Arts Schools" "Speech Therapists"
+"Dietitians / Nutritionists" "Auto Repair / Mechanics" "Towing Services"
+"Car Wash / Detailing" "Auto Body / Paint Shops" "Moving Companies"
+"Storage Facilities (local)" "Lawyers (solo or small firms)" "Accountants / CPAs"
+"Notaries" "Tax Preparation Services" "Insurance Agents / Brokers"
+"Real Estate Agents (solo)" "Home Inspectors" "Hair Salons / Barbershops"
+"Nail Salons / Beauty Services" "Pet Grooming / Pet Care"
+"Dog Walking / Pet Sitting" "Event Planners / Party Rentals"
+"Photography / Videography Studios" "Tutoring / Learning Centers"
+"Music / Art Teachers" "Catering (small local)" "Florists" "Tailors / Alterations"
+"Dry Cleaners" "Locksmiths" "Sign Installation / Printing"
+"Elevator / Lift Maintenance" "Pool / Spa Installation"
+"Solar Panel Installation" "Siding Installation / Repair"
+"Tree Services / Arborists" "Fence Builders" "Deck / Patio Builders"
+"Window / Door Installation"
 )
 
-# --------------------------------------------------------------------
-# 🌎 CITIES — add/adjust to target more local markets
-# --------------------------------------------------------------------
+# Cities --------------------------------------------------------------
 CITIES=(
-  "seattle" "portland" "san-diego" "dallas" "denver"
-  "phoenix" "austin" "sacramento" "salt-lake-city" "boise"
-  "tucson" "las-vegas" "spokane" "reno" "houston"
+"Seattle, WA" "Spokane, WA" "Tacoma, WA" "Portland, OR" "Eugene, OR"
+"Salem, OR" "Boise, ID" "Denver, CO" "Colorado Springs, CO" "Phoenix, AZ"
+"Mesa, AZ" "Tucson, AZ" "Las Vegas, NV" "Reno, NV" "Salt Lake City, UT"
+"Albuquerque, NM" "Dallas, TX" "Fort Worth, TX" "Austin, TX"
+"San Antonio, TX" "Houston, TX" "El Paso, TX" "Oklahoma City, OK"
+"Tulsa, OK" "Kansas City, MO" "St. Louis, MO" "Omaha, NE" "Wichita, KS"
+"Minneapolis, MN" "St. Paul, MN" "Des Moines, IA" "Chicago, IL"
+"Indianapolis, IN" "Columbus, OH" "Cleveland, OH" "Cincinnati, OH"
+"Detroit, MI" "Grand Rapids, MI" "Milwaukee, WI" "Nashville, TN"
+"Memphis, TN" "Louisville, KY" "Birmingham, AL" "Atlanta, GA"
+"Savannah, GA" "Charlotte, NC" "Raleigh, NC" "Greensboro, NC"
+"Charleston, SC" "Columbia, SC" "Jacksonville, FL" "Orlando, FL"
+"Tampa, FL" "St. Petersburg, FL" "Miami, FL" "Fort Lauderdale, FL"
+"New Orleans, LA" "Little Rock, AR" "Jackson, MS" "Richmond, VA"
+"Virginia Beach, VA" "Washington, DC" "Baltimore, MD" "Philadelphia, PA"
+"Pittsburgh, PA" "Buffalo, NY" "Rochester, NY" "Albany, NY" "Newark, NJ"
+"Jersey City, NJ" "Hartford, CT" "New Haven, CT" "Providence, RI"
+"Boston, MA" "Springfield, MA" "Manchester, NH" "Portland, ME"
+"Los Angeles, CA" "San Diego, CA" "San Jose, CA" "Sacramento, CA"
+"Fresno, CA" "Bakersfield, CA" "Riverside, CA" "San Bernardino, CA"
+"Oakland, CA" "Long Beach, CA" "Anaheim, CA" "Santa Ana, CA"
+"Irvine, CA" "Chula Vista, CA" "Stockton, CA" "Modesto, CA"
+"Corpus Christi, TX" "Chandler, AZ" "Scottsdale, AZ"
 )
 
-DELAY_BETWEEN_RUNS=45  # seconds
+# Random selection ----------------------------------------------------
+readarray -t SEL_SERVICES < <(printf "%s\n" "${SERVICES[@]}" | sort -R | head -n 3)
+readarray -t SEL_CITIES   < <(printf "%s\n" "${CITIES[@]}"   | sort -R | head -n 3)
 
-# Random seed for daily shuffle (rotates each run)
-RANDOM_SEED=$(date +%s)
+echo "=== Today's Random Selections ===" | tee -a "$LOG_DIR/summary.log"
 
-# ====================================================================
-# 🧠 Logging Helper
-# ====================================================================
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-}
-
-# ====================================================================
-# 🔀 Cross-platform deterministic shuffle helper
-# ====================================================================
-shuffle_pairs() {
-  local input_file="$1"
-  local output_file="$2"
-  local seed="$3"
-
-  if command -v shuf >/dev/null 2>&1; then
-    shuf --random-source=<(printf '%s' "$seed") "$input_file" > "$output_file"
-  else
-    /usr/bin/python3 - "$input_file" "$output_file" "$seed" <<'PY'
-import random
-import sys
-
-in_file, out_file, seed = sys.argv[1], sys.argv[2], int(sys.argv[3])
-with open(in_file, encoding="utf-8") as f:
-    rows = [line.rstrip("\n") for line in f if line.strip()]
-rng = random.Random(seed)
-rng.shuffle(rows)
-with open(out_file, "w", encoding="utf-8") as f:
-    for row in rows:
-        f.write(row + "\n")
-PY
-  fi
-}
-
-# ====================================================================
-# 📁 Find latest output for a given city/service pair
-# ====================================================================
-find_latest_pair_output() {
-  local city="$1"
-  local service="$2"
-  local latest=""
-
-  latest=$(ls -t "$DATA_DIR"/no_website_emails_"$city"_"$service"_*.csv 2>/dev/null | head -n 1)
-  echo "$latest"
-}
-
-# ====================================================================
-# 🏁 Start
-# ====================================================================
-mkdir -p "$LOG_DIR"
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  log "[FATAL] Missing env file: $ENV_FILE" | tee -a "$LOG_DIR/summary.log"
-  exit 1
-fi
-
-cd "$SRC_DIR" || exit 1
-
-set -a
-source "$ENV_FILE"
-set +a
-
-EMAIL_ADDR=$DAILY_LEAD_EMAIL_SENDER
-EMAIL_PASS=$DAILY_LEAD_EMAIL_PASS
-NOTIFY_TO=${REPLY_NOTIFY_TO:-$EMAIL_ADDR}
-
-if [[ -z "$EMAIL_ADDR" || -z "$EMAIL_PASS" ]]; then
-  log "[FATAL] DAILY_LEAD_EMAIL_SENDER or DAILY_LEAD_EMAIL_PASS missing in .env" | tee -a "$LOG_DIR/summary.log"
-  exit 1
-fi
-
-log "=== 🚀 Starting ZBA Digital Multi‑Service/Multi‑City Pipeline ===" | tee -a "$LOG_DIR/summary.log"
-log "--- Random seed: $RANDOM_SEED ---" | tee -a "$LOG_DIR/summary.log"
+{
+  echo "Services:"
+  printf "%s\n" "${SEL_SERVICES[@]}"
+  echo
+  echo "Cities:"
+  printf "%s\n" "${SEL_CITIES[@]}"
+  echo
+} | tee -a "$LOG_DIR/summary.log"
 
 PAIR_FILE="$LOG_DIR/.pairs.tmp"
 > "$PAIR_FILE"
-for service in "${SERVICES[@]}"; do
-  for city in "${CITIES[@]}"; do
-    echo "$service|$city" >> "$PAIR_FILE"
-  done
+for i in {0..2}; do
+  printf "%s|%s\n" "${SEL_SERVICES[$i]}" "${SEL_CITIES[$i]}" >> "$PAIR_FILE"
 done
 
-shuffle_pairs "$PAIR_FILE" "$PAIR_FILE.shuf" "$RANDOM_SEED"
+# Reset per-run email log so summary counts reflect this run only
+: > "$LOG_DIR/email.log"
 
+log "=== Selected Pairs ===" | tee -a "$LOG_DIR/summary.log"
+cat "$PAIR_FILE" | tee -a "$LOG_DIR/summary.log"
+TOTAL=$(wc -l < "$PAIR_FILE")
 COUNT=0
-TOTAL_PAIRS=$(wc -l < "$PAIR_FILE.shuf")
+
+# Main loop -----------------------------------------------------------
+log "=== Starting Run ($TOTAL pairs) ===" | tee -a "$LOG_DIR/summary.log"
+cd "$SRC_DIR" || exit 1
+set -a; source "$ENV_FILE"; set +a
+DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
+log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 
 while IFS='|' read -r service city; do
   ((COUNT++))
-  log "=== ▶️  [$COUNT/$TOTAL_PAIRS] Processing: $service | $city ===" | tee -a "$LOG_DIR/summary.log"
+  log "--- [$COUNT/$TOTAL] $service | $city ---" | tee -a "$LOG_DIR/summary.log"
 
-  /usr/bin/python3 "$SRC_DIR/find_no_website_emails.py" "$service" "$city" >> "$LOG_DIR/summary.log" 2>&1
-
-  pair_csv=$(find_latest_pair_output "$city" "$service")
-  if [[ -n "$pair_csv" ]]; then
-    log "[INFO] Sending outreach from: $(basename "$pair_csv")" | tee -a "$LOG_DIR/email.log"
-    /usr/bin/python3 "$SRC_DIR/send_cold_emails.py" "$pair_csv" >> "$LOG_DIR/email.log" 2>&1
+  # Step 1: Discovery
+  log "[DISCOVERY] Finding leads without websites -> $service | $city" | tee -a "$LOG_DIR/summary.log"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "[DRY] Skipping discovery command." | tee -a "$LOG_DIR/summary.log"
   else
-    log "[WARN] No verified output file found for $service | $city; skipping send step." | tee -a "$LOG_DIR/summary.log"
+    if ! /usr/bin/python3 "$SRC_DIR/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+      log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
+      sleep "$DELAY_BETWEEN_RUNS"; continue
+    fi
   fi
 
-  log "--- Sleeping ${DELAY_BETWEEN_RUNS}s before next pair ---" | tee -a "$LOG_DIR/summary.log"
+  # Step 2: Enrichment
+  log "[INFO] Enriching leads for $service | $city" | tee -a "$LOG_DIR/summary.log"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "[DRY] Skipping enrichment command." | tee -a "$LOG_DIR/summary.log"
+  else
+    if ! /usr/bin/python3 "$SRC_DIR/find_no_website_emails.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+      log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
+      sleep "$DELAY_BETWEEN_RUNS"; continue
+    fi
+  fi
+
+  safe_city="$(sanitize_for_filename "$city")"
+  safe_service="$(sanitize_for_filename "$service")"
+  FILE_TAG="${safe_city}_${safe_service}"
+  OUT_FILE="$DATA_DIR/leads_${FILE_TAG}_NO_WEBSITE_$(date +%Y-%m-%d).csv"
+  if [[ "$DRY_RUN" == "false" && ! -f "$OUT_FILE" ]]; then
+    log "[WARN] No enriched file found -> $OUT_FILE" | tee -a "$LOG_DIR/summary.log"
+    sleep "$DELAY_BETWEEN_RUNS"; continue
+  fi
+
+  # Step 3: Outreach
+  log "[INFO] Starting outreach for $service | $city" | tee -a "$LOG_DIR/email.log"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "[DRY] Skipping outreach command for $OUT_FILE" | tee -a "$LOG_DIR/email.log"
+  else
+    if ! /usr/bin/python3 "$SRC_DIR/send_cold_emails.py" "$OUT_FILE" >>"$LOG_DIR/email.log" 2>&1; then
+      log "[ERR] Email send failed for $service | $city" | tee -a "$LOG_DIR/email.log"
+    fi
+  fi
+
+  log "--- Sleeping ${DELAY_BETWEEN_RUNS}s ---" | tee -a "$LOG_DIR/summary.log"
   sleep "$DELAY_BETWEEN_RUNS"
-done < "$PAIR_FILE.shuf"
+done < "$PAIR_FILE"
 
-rm -f "$PAIR_FILE" "$PAIR_FILE.shuf"
+rm -f "$PAIR_FILE"
 
-# ====================================================================
-# 📊 Daily Summary Email
-# ====================================================================
-log "📧 Preparing daily progress email summary..." | tee -a "$LOG_DIR/summary.log"
+# Summary email -------------------------------------------------------
+# Build daily summary
+sent_count=$(grep -c "\[SENT\]" "$LOG_DIR/email.log" 2>/dev/null || true)
+reply_count=$(grep -c "\[REPLY\]" "$LOG_DIR/email.log" 2>/dev/null || true)
+lead_count=$(ls "$DATA_DIR"/leads_* 2>/dev/null | wc -l | awk '{print $1}')
 
-SUMMARY_TEXT=$(cat <<EOF
-Daily Automation Summary - $(date '+%A, %B %d, %Y')
+SUMMARY=$(cat <<EOF
+Daily Pipeline Summary – $(date '+%A, %B %d, %Y')
 
-✅ Total city/service campaigns: $TOTAL_PAIRS
-📁 Lead CSV files generated: $(ls "$BASE_DIR/data"/no_website_emails_* 2>/dev/null | wc -l)
-✉️ Emails sent today: $(grep -c "\[SENT\]" "$LOG_DIR/email.log" 2>/dev/null || echo 0)
-💬 Replies detected: $(grep -c "\[REPLY\]" "$LOG_DIR/email.log" 2>/dev/null || echo 0)
+Pairs Processed: $TOTAL
+Leads Generated: $lead_count
+Emails Sent: ${sent_count:-0}
+Replies Detected: ${reply_count:-0}
 
-Logs:
+Log files:
 - Summary: $LOG_DIR/summary.log
-- Email:   $LOG_DIR/email.log
-
-Have a productive day!
--- ZBA Digital Automation
+- Email: $LOG_DIR/email.log
 EOF
 )
 
+log "Sending Summary Email..." | tee -a "$LOG_DIR/summary.log"
+if [[ "$DRY_RUN" == "true" ]]; then
+  log "[DRY] Skipping summary email send." | tee -a "$LOG_DIR/summary.log"
+else
 /usr/bin/python3 - <<END
 import os, smtplib, ssl
 from email.mime.text import MIMEText
-sender = os.environ.get("DAILY_LEAD_EMAIL_SENDER")
-password = os.environ.get("DAILY_LEAD_EMAIL_PASS")
-receiver = os.environ.get("REPLY_NOTIFY_TO", sender)
-if not sender or not password:
-  raise SystemExit("Missing DAILY_LEAD_EMAIL_SENDER or DAILY_LEAD_EMAIL_PASS")
-body = """$SUMMARY_TEXT"""
-msg = MIMEText(body, "plain", "utf-8")
-msg["Subject"] = "[ZBA Digital] Daily Pipeline Summary"
-msg["From"] = sender
-msg["To"] = receiver
-context = ssl.create_default_context()
-with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as s:
-    s.login(sender, password)
-    s.sendmail(sender, [receiver], msg.as_string())
+sender=os.getenv("DAILY_LEAD_EMAIL_SENDER")
+password=os.getenv("DAILY_LEAD_EMAIL_PASS")
+receiver=os.getenv("REPLY_NOTIFY_TO", sender)
+if sender and password:
+    msg=MIMEText("""$SUMMARY""","plain","utf-8")
+    msg["Subject"]="[ZBA Digital] Daily Pipeline Summary"
+    msg["From"]=sender
+    msg["To"]=receiver
+    ctx=ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com",465,context=ctx) as s:
+        s.login(sender,password)
+        s.sendmail(sender,[receiver],msg.as_string())
 END
+  fi
 
-log "✅ Summary email sent to $NOTIFY_TO" | tee -a "$LOG_DIR/summary.log"
-log "--- Finished at $(date '+%Y-%m-%d %H:%M:%S') ---" | tee -a "$LOG_DIR/summary.log"
+log "Summary Email Sent to $REPLY_NOTIFY_TO" | tee -a "$LOG_DIR/summary.log"
+log "Completed $(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$LOG_DIR/summary.log"
