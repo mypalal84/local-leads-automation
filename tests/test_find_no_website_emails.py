@@ -144,3 +144,15 @@ def test_prune_expired_cache_removes_old_files(tmp_path, monkeypatch):
     assert removed == 1
     assert not old_file.exists()
     assert fresh_file.exists()
+
+
+def test_increment_api_counter_updates_metrics_file(tmp_path, monkeypatch):
+    metrics_file = pathlib.Path(tmp_path) / "run_metrics.json"
+    metrics_file.write_text('{"google_places": 0, "serper": 1, "hunter": 0}', encoding="utf-8")
+    monkeypatch.setattr(enrich_mod, "RUN_METRICS_FILE", str(metrics_file))
+
+    enrich_mod.increment_api_counter("hunter")
+
+    payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+    assert payload["serper"] == 1
+    assert payload["hunter"] == 1

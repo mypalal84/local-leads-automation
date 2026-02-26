@@ -30,6 +30,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
+RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -69,6 +70,24 @@ def cache_set(prefix: str, key: str, value):
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
+    except Exception:
+        pass
+
+
+def increment_api_counter(counter_key: str):
+    if not RUN_METRICS_FILE:
+        return
+    try:
+        data = {"google_places": 0, "serper": 0, "hunter": 0}
+        if os.path.isfile(RUN_METRICS_FILE):
+            with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            for key in data:
+                data[key] = int(loaded.get(key, 0) or 0)
+        if counter_key in data:
+            data[counter_key] += 1
+        with open(RUN_METRICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
     except Exception:
         pass
 
@@ -127,6 +146,7 @@ def search_serper(query):
     if cached is not None:
         return cached
     def _call():
+        increment_api_counter("serper")
         payload = {"q": query, "num": 5}
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
         r = requests.post("https://google.serper.dev/search",
@@ -163,6 +183,7 @@ def hunter_email_lookup(domain):
     if cached is not None:
         return cached
     def _call():
+        increment_api_counter("hunter")
         r = requests.get("https://api.hunter.io/v2/domain-search",
                          params={"domain": domain, "api_key": HUNTER},
                          timeout=15)

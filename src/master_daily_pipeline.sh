@@ -35,6 +35,14 @@ shopt -u nocasematch
 
 mkdir -p "$LOG_DIR" "$DATA_DIR"
 
+RUN_ID="$(date '+%Y-%m-%d_%H-%M-%S')"
+RUN_METRICS_FILE="$LOG_DIR/run_metrics_${RUN_ID}.json"
+export PIPELINE_RUN_METRICS_FILE="$RUN_METRICS_FILE"
+
+cat > "$RUN_METRICS_FILE" <<EOF
+{"google_places": 0, "serper": 0, "hunter": 0}
+EOF
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 sanitize_for_filename() {
@@ -166,6 +174,7 @@ COUNT=0
 log "=== Starting Run ($TOTAL pairs) ===" | tee -a "$LOG_DIR/summary.log"
 cd "$SRC_DIR" || exit 1
 set -a; source "$ENV_FILE"; set +a
+export PIPELINE_RUN_METRICS_FILE="$RUN_METRICS_FILE"
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
@@ -252,6 +261,31 @@ fi
 echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},$lead_count,$sent_today_end,$remaining_quota_end" >> "$KPI_CSV"
 log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
 
+api_counts=$(/usr/bin/python3 - <<END
+import json, os
+path = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
+data = {"google_places": 0, "serper": 0, "hunter": 0}
+if path and os.path.isfile(path):
+  try:
+    with open(path, "r", encoding="utf-8") as f:
+      loaded = json.load(f)
+    for k in data:
+      data[k] = int(loaded.get(k, 0) or 0)
+  except Exception:
+    pass
+print(f"{data['google_places']}|{data['serper']}|{data['hunter']}")
+END
+)
+IFS='|' read -r api_google_places_count api_serper_count api_hunter_count <<< "$api_counts"
+
+API_SUMMARY=$(cat <<EOF
+API Calls This Run:
+- Google Places: ${api_google_places_count:-0}
+- Serper: ${api_serper_count:-0}
+- Hunter: ${api_hunter_count:-0}
+EOF
+)
+
 SUMMARY=$(cat <<EOF
 Daily Pipeline Summary – $(date '+%A, %B %d, %Y')
 
@@ -259,6 +293,8 @@ Pairs Processed: $TOTAL
 Leads Generated: $lead_count
 Emails Sent: ${sent_count:-0}
 Replies Detected: ${reply_count:-0}
+
+$API_SUMMARY
 
 Log files:
 - Summary: $LOG_DIR/summary.log

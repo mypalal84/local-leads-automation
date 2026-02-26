@@ -36,6 +36,7 @@ CACHE_DIR = os.path.join(DATA_DIR, "cache")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
+RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
 # ======================================================
 # AUTO‑ARCHIVE PREVIOUS DATA FILES
@@ -108,6 +109,24 @@ def cache_set(prefix: str, key: str, value):
         pass
 
 
+def increment_api_counter(counter_key: str):
+    if not RUN_METRICS_FILE:
+        return
+    try:
+        data = {"google_places": 0, "serper": 0, "hunter": 0}
+        if os.path.isfile(RUN_METRICS_FILE):
+            with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            for key in data:
+                data[key] = int(loaded.get(key, 0) or 0)
+        if counter_key in data:
+            data[counter_key] += 1
+        with open(RUN_METRICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
 def prune_expired_cache():
     cutoff = datetime.now() - timedelta(days=CACHE_TTL_DAYS)
     removed = 0
@@ -163,6 +182,7 @@ def run_serper_search(query: str):
         return cached
     
     def _call():
+        increment_api_counter("serper")
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
         payload = {"q": query, "num": 10}
         resp = requests.post(

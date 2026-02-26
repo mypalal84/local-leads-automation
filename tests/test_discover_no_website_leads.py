@@ -111,3 +111,18 @@ def test_run_serper_search_uses_cache(tmp_path, monkeypatch):
 
     assert first == second
     assert calls["count"] == 1
+
+
+def test_increment_api_counter_updates_metrics_file(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    metrics_file = pathlib.Path(tmp_path) / "run_metrics.json"
+    metrics_file.write_text('{"google_places": 0, "serper": 0, "hunter": 0}', encoding="utf-8")
+    monkeypatch.setattr(module, "RUN_METRICS_FILE", str(metrics_file))
+
+    module.increment_api_counter("serper")
+
+    payload = __import__("json").loads(metrics_file.read_text(encoding="utf-8"))
+    assert payload["serper"] == 1
