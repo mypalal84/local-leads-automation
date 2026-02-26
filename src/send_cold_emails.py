@@ -30,9 +30,14 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 SENT_LOG = os.path.join(DATA_DIR, "sent_log.csv")
 REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
+SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
 DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
 DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{datetime.now().strftime('%Y-%m-%d')}.csv")
+NEGATIVE_REPLY_KEYWORDS = [
+    "unsubscribe", "stop", "remove", "do not contact", "don't contact",
+    "not interested", "no thanks", "no thank you", "wrong email", "spam"
+]
 
 # --------------------------------------------------
 # Message templates
@@ -74,6 +79,30 @@ def append_to_log(email):
 def append_to_daily_log(email):
     with open(DAILY_SENT_LOG, "a", newline="") as f:
         csv.writer(f).writerow([email.lower()])
+
+def load_suppression_list():
+    if not os.path.exists(SUPPRESSIONS_FILE):
+        return set()
+    with open(SUPPRESSIONS_FILE, newline="", encoding="utf-8") as f:
+        rows = csv.reader(f)
+        return set(row[0].strip().lower() for row in rows if row and row[0].strip())
+
+def append_to_suppressions(email_addr, reason="manual"):
+    email_addr = (email_addr or "").strip().lower()
+    if not email_addr:
+        return
+    existing = load_suppression_list()
+    if email_addr in existing:
+        return
+    with open(SUPPRESSIONS_FILE, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([email_addr, reason, datetime.now().isoformat(timespec="seconds")])
+
+def extract_email_address(from_field):
+    m = re.search(r"<([^>]+)>", from_field or "")
+    if m:
+        return m.group(1).strip().lower()
+    m2 = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", from_field or "")
+    return m2.group(0).strip().lower() if m2 else ""
 
 def load_daily_sent_count():
     if not os.path.exists(DAILY_SENT_LOG):
@@ -127,6 +156,7 @@ def parse_context_from_filename(fname):
 # --------------------------------------------------
 def send_cold_emails(csv_file=None):
     sent = load_sent_log()
+    suppressed = load_suppression_list()
     already_sent_today = load_daily_sent_count()
     remaining_quota = max(DAILY_EMAIL_TARGET - already_sent_today, 0)
 
@@ -155,7 +185,9 @@ def send_cold_emails(csv_file=None):
             reader = csv.DictReader(csvfile)
             for row in reader:
                 email_field = row.get("emails","").split(",")[0].strip().lower()
-                if not email_field or email_field in sent:
+                if not email_field or email_field in sent or email_field in suppressed:
+                    if email_field in suppressed:
+                        print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
                     continue
 
                 business = row.get("name","your company").strip()
@@ -231,10 +263,15 @@ def fetch_replies():
                         body = decode_fragment(msg.get_payload(decode=True))[:150].replace("\n"," ")
                     date = msg.get("Date","")
                     writer.writerow([frm, subject, body, date])
-                    m2 = re.search(r"<([^>]+)>", frm)
-                    if m2:
-                        replied_addresses.add(m2.group(1).lower())
-                        print(f"[REPLY] {m2.group(1)} | {subject}")
+                    reply_email = extract_email_address(frm)
+                    if reply_email:
+                        replied_addresses.add(reply_email)
+                        print(f"[REPLY] {reply_email} | {subject}")
+
+                        combined = f"{subject} {body}".lower()
+                        if any(keyword in combined for keyword in NEGATIVE_REPLY_KEYWORDS):
+                            append_to_suppressions(reply_email, reason="negative_reply")
+                            print(f"[SUPPRESS] Added from negative reply: {reply_email}")
 
         mail.logout()
         if replied_addresses:

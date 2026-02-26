@@ -205,6 +205,18 @@ rm -f "$PAIR_FILE"
 sent_count=$(grep -c "\[SENT\]" "$LOG_DIR/email.log" 2>/dev/null || true)
 reply_count=$(grep -c "\[REPLY\]" "$LOG_DIR/email.log" 2>/dev/null || true)
 lead_count=$(ls "$DATA_DIR"/leads_* 2>/dev/null | wc -l | awk '{print $1}')
+sent_today_end=$(today_sent_count)
+remaining_quota_end=$((DAILY_EMAIL_TARGET - sent_today_end))
+if (( remaining_quota_end < 0 )); then
+  remaining_quota_end=0
+fi
+
+KPI_CSV="$LOG_DIR/daily_kpi.csv"
+if [[ ! -f "$KPI_CSV" ]]; then
+  echo "date,timestamp,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,total_lead_files,sent_today_total,remaining_quota_end" > "$KPI_CSV"
+fi
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},$lead_count,$sent_today_end,$remaining_quota_end" >> "$KPI_CSV"
+log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
 
 SUMMARY=$(cat <<EOF
 Daily Pipeline Summary – $(date '+%A, %B %d, %Y')

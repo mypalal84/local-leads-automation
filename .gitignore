@@ -10,6 +10,7 @@ logs/
 data/leads_*.csv
 data/replies.csv
 data/sent_log.csv
+data/suppressions.csv
 data/archive/
 
 # Caching and history
