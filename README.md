@@ -79,6 +79,7 @@ ENRICH_BUFFER_MULTIPLIER=2
 EXPECTED_SENDS_PER_PAIR=5
 MAX_PAIRS_PER_RUN=15
 LEAD_SCORE_THRESHOLD=2
+PRE_ENRICH_SCORE_FILTER=true
 CACHE_TTL_DAYS=7
 
 # Optional footer appended to cold emails
@@ -144,6 +145,7 @@ www.zbadigital.com
 - 💸 Quota-aware enrichment to reduce API usage (`ENRICH_BUFFER_MULTIPLIER`)
 - 📊 Dynamic pair scheduling (`EXPECTED_SENDS_PER_PAIR`, `MAX_PAIRS_PER_RUN`)
 - ✅ Lead quality gate before send (`LEAD_SCORE_THRESHOLD`)
+- 🧮 Pre-enrich score floor to avoid low-probability API calls (`PRE_ENRICH_SCORE_FILTER`)
 - ♻️ Serper/Hunter cache with TTL pruning (`CACHE_TTL_DAYS`)
 - 🛑 Suppression list enforcement (`data/suppressions.csv`)
 - 📬 Unsubscribe footer support via `UNSUBSCRIBE_FOOTER`

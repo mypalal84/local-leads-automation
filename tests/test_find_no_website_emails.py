@@ -45,6 +45,7 @@ def test_enrich_respects_max_leads_limit(tmp_path, monkeypatch):
     data_dir = pathlib.Path(tmp_path)
     monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
     monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
 
     service = "Fence Installation / Repair"
     town = "Colorado Springs, CO"
@@ -156,3 +157,86 @@ def test_increment_api_counter_updates_metrics_file(tmp_path, monkeypatch):
     payload = json.loads(metrics_file.read_text(encoding="utf-8"))
     assert payload["serper"] == 1
     assert payload["hunter"] == 1
+
+
+def test_pre_enrich_score_filter_skips_api_calls_for_low_score_lead(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "LEAD_SCORE_THRESHOLD", 3)
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", True)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes"])
+        writer.writeheader()
+        writer.writerow({"name": "Solo", "emails": "", "website": "", "notes": ""})
+
+    calls = {"search": 0, "hunter": 0}
+
+    def fake_search(_query):
+        calls["search"] += 1
+        return ["http://example.com"]
+
+    def fake_hunter(_domain):
+        calls["hunter"] += 1
+        return ["owner@example.com"]
+
+    monkeypatch.setattr(enrich_mod, "search_serper", fake_search)
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+    assert calls["search"] == 0
+    assert calls["hunter"] == 0
+
+
+def test_pre_enrich_score_filter_allows_api_calls_for_eligible_lead(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "LEAD_SCORE_THRESHOLD", 3)
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", True)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes"])
+        writer.writeheader()
+        writer.writerow({"name": "Bright Fences", "emails": "", "website": "", "notes": "no website"})
+
+    calls = {"search": 0, "hunter": 0}
+
+    def fake_search(_query):
+        calls["search"] += 1
+        return ["http://example.com"]
+
+    def fake_hunter(_domain):
+        calls["hunter"] += 1
+        return ["owner@example.com"]
+
+    monkeypatch.setattr(enrich_mod, "search_serper", fake_search)
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+    assert calls["search"] == 1
+    assert calls["hunter"] == 1
+
+
+def test_pre_enrich_base_score_ignores_nan_website():
+    row = {"name": "Bright Fences", "notes": "", "website": float("nan")}
+    assert enrich_mod.pre_enrich_base_score(row) == 1

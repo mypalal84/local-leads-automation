@@ -24,6 +24,8 @@ load_dotenv()
 SERPER = os.getenv("SERPER_API_KEY")
 HUNTER = os.getenv("HUNTER_API_KEY")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
+PRE_ENRICH_SCORE_FILTER = os.getenv("PRE_ENRICH_SCORE_FILTER", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -35,6 +37,9 @@ RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ZBA‑LeadBot/1.1)"}
+FREE_EMAIL_DOMAINS = {
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"
+}
 
 
 def sanitize_for_filename(value: str) -> str:
@@ -194,6 +199,34 @@ def hunter_email_lookup(domain):
     cache_set("hunter", domain, result)
     return result
 
+
+def pre_enrich_base_score(row):
+    score = 0
+    business_val = row.get("name", "")
+    notes_val = row.get("notes", "")
+    website_val = row.get("website", "")
+
+    business = "" if pd.isna(business_val) else str(business_val).strip()
+    notes = "" if pd.isna(notes_val) else str(notes_val).lower()
+    website = "" if pd.isna(website_val) else str(website_val).strip()
+
+    if len(business.split()) >= 2:
+        score += 1
+
+    if any(token in notes for token in ["under construction", "business.site", "no website"]):
+        score += 1
+
+    if website:
+        score -= 2
+
+    return score
+
+
+def can_reach_send_threshold(row, threshold):
+    # Best case after enrichment: valid business-domain email (+2)
+    # (+1 for having an email, +1 for non-free domain)
+    return pre_enrich_base_score(row) + 2 >= threshold
+
 # ======================================================
 # ENRICH MAIN
 # ======================================================
@@ -228,10 +261,20 @@ def enrich(service, town, max_leads=None):
                 return in_path
             df = df.head(max_leads)
 
-        enriched, skipped_site, found_emails = [], 0, 0
+        enriched, skipped_site, found_emails, skipped_score_floor = [], 0, 0, 0
         print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} …")
 
         for _, row in df.iterrows():
+            if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):
+                skipped_score_floor += 1
+                row["emails"] = ""
+                row["website"] = ""
+                enriched.append(row)
+                if DEBUG:
+                    name = str(row.get("name", "")).strip() or "(unknown)"
+                    print(f"[SCORE-FILTER] Skipping enrichment calls for {name}")
+                continue
+
             name = str(row.get("name", "")).strip()
             query = f"{name} {town} {service} contact OR email"
             links = search_serper(query)
@@ -285,6 +328,7 @@ def enrich(service, town, max_leads=None):
 
         print(f"[✅] Saved {len(enriched)} leads → {out_path}")
         print(f"   ↳ Skipped (business had site): {skipped_site}")
+        print(f"   ↳ Skipped (pre‑enrich score floor): {skipped_score_floor}")
         print(f"   ↳ With verified emails: {found_emails}")
         return out_path
 

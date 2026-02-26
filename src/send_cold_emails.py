@@ -319,11 +319,20 @@ def parse_context_from_filename(fname):
     return "Your Town", "Your Service"
 
 
+def normalize_text_value(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() == "nan":
+        return ""
+    return text
+
+
 def score_lead(row, email_field):
     score = 0
-    business = str(row.get("name", "")).strip()
-    notes = str(row.get("notes", "")).lower()
-    website = str(row.get("website", "")).strip()
+    business = normalize_text_value(row.get("name", ""))
+    notes = normalize_text_value(row.get("notes", "")).lower()
+    website = normalize_text_value(row.get("website", ""))
 
     if email_field and "@" in email_field:
         score += 1
