@@ -1,6 +1,8 @@
 import csv
 import pathlib
 
+import pytest
+
 import send_cold_emails as sce
 
 
@@ -21,12 +23,42 @@ class DummySMTP:
         self.sent.append(tuple(to_addrs))
 
 
-def test_parse_context_from_leads_filename():
-    town, service = sce.parse_context_from_filename(
-        "leads_Colorado_Springs_CO_Fence_Installation_Repair_NO_WEBSITE_2026-02-26.csv"
-    )
-    assert town == "Colorado Springs Co"
-    assert service == "Fence Installation Repair"
+@pytest.mark.parametrize(
+    "filename, expected_town, expected_service",
+    [
+        (
+            "leads_Colorado_Springs_CO_Fence_Installation_Repair_NO_WEBSITE_2026-02-26.csv",
+            "Colorado Springs Co",
+            "Fence Installation Repair",
+        ),
+        (
+            "no_website_emails_san-diego_window-cleaning_2026-02-26.csv",
+            "San Diego",
+            "window cleaning",
+        ),
+        (
+            "totally_unknown_pattern.csv",
+            "Your Town",
+            "Your Service",
+        ),
+    ],
+)
+def test_parse_context_from_filename(filename, expected_town, expected_service):
+    town, service = sce.parse_context_from_filename(filename)
+    assert town == expected_town
+    assert service == expected_service
+
+
+@pytest.mark.parametrize(
+    "from_value, expected",
+    [
+        ("Example Person <person@example.com>", "person@example.com"),
+        ("sales@example.com", "sales@example.com"),
+        ("No Email Here", ""),
+    ],
+)
+def test_extract_email_address(from_value, expected):
+    assert sce.extract_email_address(from_value) == expected
 
 
 def test_daily_cap_short_circuits_send(tmp_path, monkeypatch, capsys):
