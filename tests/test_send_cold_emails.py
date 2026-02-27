@@ -187,6 +187,18 @@ def test_build_email_body_includes_personalized_opener_and_formatted_town():
     assert "in San Jose, CA" in body
 
 
+def test_clean_business_name_removes_directory_suffixes():
+    raw = "Bay View Roofing, Inc.: Roofing Experts in San Francisco | Yelp"
+    assert sce.clean_business_name(raw) == "Bay View Roofing, Inc."
+
+
+def test_build_service_cta_line_varies_by_service():
+    roofing_cta = sce.build_service_cta_line("Roofers")
+    dental_cta = sce.build_service_cta_line("Dentists")
+    assert "quote-ready calls" in roofing_cta
+    assert "appointment-ready pages" in dental_cta
+
+
 def test_domain_cap_limits_sends_per_domain(tmp_path, monkeypatch):
     data_dir = pathlib.Path(tmp_path)
     csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"

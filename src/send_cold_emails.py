@@ -103,6 +103,8 @@ SUBJECTS = [
     "Helping {business} get more calls online",
     "{business} + mobile site idea",
     "{business}: quick note",
+    "{contact_name}, quick idea for {business}",
+    "{town} lead-gen idea for {business}",
 ]
 
 BODY_TEMPLATE = """Hi {contact_name},
@@ -110,6 +112,8 @@ BODY_TEMPLATE = """Hi {contact_name},
 {opener_line}
 I came across {business} while checking {service} providers in {town}.
 I help local owners like you launch professional, mobile‑friendly websites that attract more calls — within 7 days.
+
+{cta_line}
 
 Is this something you’d be open to exploring for {business}?
 
@@ -487,6 +491,32 @@ def build_personalized_opener(notes, service):
     return "I work with local businesses to turn more searches into qualified calls."
 
 
+def clean_business_name(raw_name):
+    name = normalize_text_value(raw_name)
+    if not name:
+        return "your company"
+    for separator in [" | ", " - ", " — "]:
+        if separator in name:
+            name = name.split(separator)[0].strip()
+            break
+    if ":" in name:
+        left, right = name.split(":", 1)
+        right_lower = right.lower()
+        if any(token in right_lower for token in [" in ", " near ", "best ", "top ", "reviews", "yelp", "angi", "homeadvisor"]):
+            name = left.strip()
+    name = re.sub(r"\s+", " ", name).strip(" ,;:")
+    return name or "your company"
+
+
+def build_service_cta_line(service):
+    service_text = normalize_text_value(service).lower()
+    if any(token in service_text for token in ["roof", "hvac", "plumb", "electric", "contract", "remodel"]):
+        return "If helpful, I can share a quick 2-minute homepage teardown focused on quote-ready calls."
+    if any(token in service_text for token in ["dent", "chiro", "therapy", "clinic", "health", "massage"]):
+        return "If helpful, I can share a quick 2-minute teardown focused on appointment-ready pages."
+    return "If helpful, I can share a quick 2-minute teardown focused on turning visits into real inquiries."
+
+
 def build_email_body(business, town, service, contact_name="there", notes=""):
     base = BODY_TEMPLATE.format(
         business=business,
@@ -494,6 +524,7 @@ def build_email_body(business, town, service, contact_name="there", notes=""):
         service=service,
         contact_name=(contact_name or "there"),
         opener_line=build_personalized_opener(notes, service),
+        cta_line=build_service_cta_line(service),
     )
     if UNSUBSCRIBE_FOOTER:
         return f"{base}\n\n{UNSUBSCRIBE_FOOTER}"
@@ -574,9 +605,13 @@ def send_cold_emails(csv_file=None):
                     print(f"[SCORE] Skipping {email_field} (score={lead_score}, threshold={LEAD_SCORE_THRESHOLD})")
                     continue
 
-                business = row.get("name","your company").strip()
-                subject = random.choice(SUBJECTS).format(business=business)
+                business = clean_business_name(row.get("name", "your company"))
                 contact_name = extract_contact_name(email_field)
+                subject = random.choice(SUBJECTS).format(
+                    business=business,
+                    contact_name=contact_name,
+                    town=format_town_for_copy(town),
+                )
                 body = build_email_body(
                     business=business,
                     town=town,
