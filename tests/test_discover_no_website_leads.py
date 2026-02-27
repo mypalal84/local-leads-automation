@@ -31,6 +31,7 @@ def test_archive_old_data_moves_only_lead_files(tmp_path, monkeypatch):
     sent_log.write_text("demo@example.com\n", encoding="utf-8")
 
     module = load_discover_module(home)
+    module.archive_old_data()
 
     archive_root = pathlib.Path(module.ARCHIVE_DIR)
     session_dirs = [p for p in archive_root.iterdir() if p.is_dir()]

@@ -66,9 +66,6 @@ def archive_old_data():
             print(f"[ARCHIVE] Could not move {name}: {e}")
     print(f"[ARCHIVE] Moved {len(files)} old data file(s) → {session_dir}")
 
-# Run archive before new discovery session
-archive_old_data()
-
 DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 
 HEADERS = {
@@ -364,4 +361,5 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: python3 discover_no_website_leads.py <service> <city>")
     else:
+        archive_old_data()
         discover(sys.argv[1], sys.argv[2])
