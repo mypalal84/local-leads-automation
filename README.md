@@ -145,10 +145,13 @@ LEAD_SCORE_THRESHOLD=3 MAX_PAIRS_PER_RUN=10 DAILY_EMAIL_TARGET=10 ./master_daily
 ## 📨 Cold Email Template
 
 ```text
-Hi {{business}},
+Hi {{contact_name_or_there}},
 
-I came across {{business}} while checking {{service}} providers in {{town}}.
+{{opener_line}}
+
 I help local owners like you launch professional, mobile-friendly websites that attract more calls — within 7 days.
+
+If you're curious, you can see my work at www.zbadigital.com.
 
 Is this something you’d be open to exploring for {{business}}?
 
@@ -156,12 +159,25 @@ Best,
 Alex
 ZBA Digital
 www.zbadigital.com
+
+{{unsubscribe_footer}}
 ```
+
+Current opener behavior:
+
+- Uses high-signal note snippets only (e.g., “serving since…”, “family-owned”, “licensed/insured”)
+- Avoids low-signal snippets (directory/reviews/marketplace/product-like text)
+- Falls back to a clean business-personalized line when note quality is low
 
 ## 🎯 Smart Features
 
 - 💡 Dynamic tokens: `business`, `town`, `service` auto-filled per lead
 - 🎲 Rotating subject lines for A/B testing
+- 🧠 Subject-line safety: avoids `{contact_name}` templates when contact name resolves to `there`
+- 🧭 Contact-name confidence logic (supports likely first names like `morgan`, blocks handles like `jrace`/`bbooth`)
+- 🧩 Per-lead service inference from row content (name/notes/link/website) with filename fallback
+- 🏷 Brand-aware business casing from recipient domains (`ZoomInfo`, `HomeAdvisor`, `ConsumerAffairs`, `Owens Corning`, `BBB`, etc.)
+- 🧼 Idempotent town formatting (`San Jose, CA` stays stable; prevents double-comma subjects)
 - ⏳ Random send delay (1-5 seconds) for human-like pacing
 - 🎯 Daily send cap enforcement via `DAILY_EMAIL_TARGET`
 - 💸 Quota-aware enrichment to reduce API usage (`ENRICH_BUFFER_MULTIPLIER`)
@@ -239,6 +255,9 @@ The suite includes:
 
 - Unit tests for sender, enrichment, discovery, and summary modules
 - Parameterized edge-case tests for filename and parsing behavior
+- Parameterized contact-name matrix tests (valid names vs handle-like local parts)
+- Rendered-email regression tests (subject/body output stability)
+- Subject-format regression tests (no double-comma town formatting)
 - Dry-run integration validation of master pipeline KPI output
 
 CI runs the same suite on push and pull request via `.github/workflows/tests.yml`.
@@ -300,6 +319,9 @@ MAX_PAIRS_PER_RUN=10
 | 2026-02-26 | Added daily send cap, quota-aware enrichment, suppression list support, and KPI logging. |
 | 2026-02-26 | Added pytest suite with unit and dry-run integration coverage. |
 | 2026-02-26 | Added dynamic pair scheduling, lead scoring, API caching/pruning, CI workflow, and API-call totals in summary email. |
+| 2026-02-27 | Improved copy quality: high-signal opener filtering, business-personalized fallback opener, and cleaner CTA/footer defaults. |
+| 2026-02-27 | Added per-lead service inference, subject fallback for unknown names, conservative contact-name detection with likely-first-name allowlist, and brand-aware business casing. |
+| 2026-02-27 | Added sender regression tests for rendered output, contact-name matrix, and subject/town formatting stability. |
 
 ---
 
