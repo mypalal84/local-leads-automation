@@ -165,9 +165,12 @@ www.zbadigital.com
 - ⏳ Random send delay (1-5 seconds) for human-like pacing
 - 🎯 Daily send cap enforcement via `DAILY_EMAIL_TARGET`
 - 💸 Quota-aware enrichment to reduce API usage (`ENRICH_BUFFER_MULTIPLIER`)
+- 🧩 Per-pair enrichment quota slicing (prevents one pair from consuming full remaining budget)
 - 📊 Dynamic pair scheduling (`EXPECTED_SENDS_PER_PAIR`, `MAX_PAIRS_PER_RUN`)
 - ✅ Lead quality gate before send (`LEAD_SCORE_THRESHOLD`)
 - 🧮 Pre-enrich score floor to avoid low-probability API calls (`PRE_ENRICH_SCORE_FILTER`)
+- 🚦 Existing-website rows are skipped before enrichment API calls
+- 🧭 Directory/aggregator domains are down-scored pre-enrichment (fewer low-value lookups)
 - ♻️ Serper/Hunter cache with TTL pruning (`CACHE_TTL_DAYS`)
 - 🛑 Suppression list enforcement (`data/suppressions.csv`)
 - 📬 Unsubscribe footer support via `UNSUBSCRIBE_FOOTER`
@@ -268,6 +271,13 @@ MAX_PAIRS_PER_RUN=10
 - `logs/daily_kpi.csv` → sent/replies/quota trend
 - `logs/email.log` → `[BOUNCE]`, `[VALIDATION]`, `[DOMAIN-CAP]`, `[SUPPRESS]`
 - `data/suppressions.csv` → ensure bounced/problematic addresses are being excluded
+
+### Lower API usage (quick wins)
+
+- Keep `PRE_ENRICH_SCORE_FILTER=true`.
+- Increase `LEAD_SCORE_THRESHOLD` to `3` for stricter pre-enrich gating.
+- Reduce `ENRICH_BUFFER_MULTIPLIER` from `2` to `1` if calls are still high.
+- Use `MAX_PAIRS_PER_RUN=1`–`2` during warm-up while tuning quality.
 
 ## 🛡 Best Practices
 

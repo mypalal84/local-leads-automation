@@ -41,6 +41,21 @@ FREE_EMAIL_DOMAINS = {
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"
 }
 
+DIRECTORY_DOMAIN_HINTS = {
+    "yelp.com",
+    "zocdoc.com",
+    "pinterest.com",
+    "medium.com",
+    "facebook.com",
+    "linkedin.com",
+    "thumbtack.com",
+    "angi.com",
+    "angieslist.com",
+    "yellowpages.com",
+    "mapquest.com",
+    "tripadvisor.com",
+}
+
 
 def sanitize_for_filename(value: str) -> str:
     return re.sub(r'[^A-Za-z0-9_]+', '_', str(value).strip()).strip('_')
@@ -205,10 +220,12 @@ def pre_enrich_base_score(row):
     business_val = row.get("name", "")
     notes_val = row.get("notes", "")
     website_val = row.get("website", "")
+    link_val = row.get("link", "")
 
     business = "" if pd.isna(business_val) else str(business_val).strip()
     notes = "" if pd.isna(notes_val) else str(notes_val).lower()
     website = "" if pd.isna(website_val) else str(website_val).strip()
+    link = "" if pd.isna(link_val) else str(link_val).strip().lower()
 
     if len(business.split()) >= 2:
         score += 1
@@ -218,6 +235,11 @@ def pre_enrich_base_score(row):
 
     if website:
         score -= 2
+
+    if link:
+        netloc = urlparse(link).netloc.lower().replace("www.", "")
+        if any(netloc == d or netloc.endswith(f".{d}") for d in DIRECTORY_DOMAIN_HINTS):
+            score -= 1
 
     return score
 
@@ -265,6 +287,16 @@ def enrich(service, town, max_leads=None):
         print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} …")
 
         for _, row in df.iterrows():
+            website_val = row.get("website", "")
+            existing_website = "" if pd.isna(website_val) else str(website_val).strip()
+
+            if existing_website:
+                skipped_site += 1
+                if DEBUG:
+                    name = str(row.get("name", "")).strip() or "(unknown)"
+                    print(f"[SKIP-ROW] Existing website present for {name}: {existing_website}")
+                continue
+
             if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):
                 skipped_score_floor += 1
                 row["emails"] = ""

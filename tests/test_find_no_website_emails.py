@@ -240,3 +240,59 @@ def test_pre_enrich_score_filter_allows_api_calls_for_eligible_lead(tmp_path, mo
 def test_pre_enrich_base_score_ignores_nan_website():
     row = {"name": "Bright Fences", "notes": "", "website": float("nan")}
     assert enrich_mod.pre_enrich_base_score(row) == 1
+
+
+def test_pre_enrich_base_score_penalizes_directory_domains():
+    row = {
+        "name": "Bright Fences",
+        "notes": "",
+        "website": "",
+        "link": "https://www.zocdoc.com/dentists/sacramento-209566pm/4",
+    }
+    assert enrich_mod.pre_enrich_base_score(row) == 0
+
+
+def test_existing_website_row_skips_api_calls(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", True)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Directory Listing",
+                "emails": "",
+                "website": "http://www.zocdoc.com",
+                "notes": "",
+                "link": "https://www.zocdoc.com/dentist/example",
+            }
+        )
+
+    calls = {"search": 0, "hunter": 0}
+
+    def fake_search(_query):
+        calls["search"] += 1
+        return ["http://example.com"]
+
+    def fake_hunter(_domain):
+        calls["hunter"] += 1
+        return ["owner@example.com"]
+
+    monkeypatch.setattr(enrich_mod, "search_serper", fake_search)
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path is None
+    assert calls["search"] == 0
+    assert calls["hunter"] == 0

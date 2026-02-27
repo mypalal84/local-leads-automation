@@ -282,10 +282,16 @@ while IFS='|' read -r service city; do
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping enrichment command." | tee -a "$LOG_DIR/summary.log"
   else
-    enrich_limit=$((remaining_quota * ENRICH_BUFFER_MULTIPLIER))
+    pairs_remaining=$((TOTAL - COUNT + 1))
+    if (( pairs_remaining < 1 )); then
+      pairs_remaining=1
+    fi
+    quota_slice=$(( (remaining_quota + pairs_remaining - 1) / pairs_remaining ))
+    enrich_limit=$((quota_slice * ENRICH_BUFFER_MULTIPLIER))
     if (( enrich_limit < 1 )); then
       enrich_limit=1
     fi
+    log "[BUDGET] remaining_quota=$remaining_quota, pairs_remaining=$pairs_remaining, quota_slice=$quota_slice, enrich_limit=$enrich_limit" | tee -a "$LOG_DIR/summary.log"
     if ! "$PYTHON_BIN" "$SRC_DIR/find_no_website_emails.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
