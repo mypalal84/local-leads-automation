@@ -158,6 +158,7 @@ def test_build_email_body_includes_unsubscribe_footer(monkeypatch):
 def test_extract_contact_name_from_email():
     assert sce.extract_contact_name("andy.maclean@owenscorning.com") == "Andy"
     assert sce.extract_contact_name("info@company.com") == "there"
+    assert sce.extract_contact_name("jrace@allenthomasgroup.com") == "there"
 
 
 def test_build_email_body_uses_contact_name():
@@ -192,7 +193,7 @@ def test_build_personalized_opener_falls_back_for_caption_like_notes():
         "Roofing installation above coastal homes with ocean view and clear sky",
         "Roofers",
     )
-    assert "especially in roofing" in opener
+    assert "quick website idea" in opener
 
 
 def test_build_email_body_uses_clearer_default_unsubscribe_copy(monkeypatch):

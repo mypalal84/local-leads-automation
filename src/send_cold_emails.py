@@ -207,7 +207,12 @@ def extract_contact_name(email_addr):
     if "@" not in email_addr:
         return "there"
     local_part = email_addr.split("@")[0]
-    token = re.split(r"[._+\-]", local_part)[0].strip()
+    parts = [part.strip() for part in re.split(r"[._+\-]", local_part) if part.strip()]
+    if not parts:
+        return "there"
+    if len(parts) == 1:
+        return "there"
+    token = parts[0]
     if not token or token in GENERIC_LOCAL_PARTS:
         return "there"
     if not token.isalpha() or len(token) < 2:
@@ -510,8 +515,8 @@ def build_personalized_opener(notes, service):
     elif "hvac" in service_text:
         service_phrase = "HVAC"
     if service_text:
-        return f"I work with local businesses to turn more searches into qualified calls, especially in {service_phrase}."
-    return "I work with local businesses to turn more searches into qualified calls."
+        return f"I had a quick website idea for local {service_phrase} businesses."
+    return "I had a quick website idea for your business."
 
 
 def infer_business_name_from_email(email_addr):
