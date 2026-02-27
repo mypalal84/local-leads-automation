@@ -184,6 +184,10 @@ def test_format_town_for_copy_adds_state_comma():
     assert sce.format_town_for_copy("San Jose Ca") == "San Jose, CA"
 
 
+def test_format_town_for_copy_keeps_existing_comma_format():
+    assert sce.format_town_for_copy("San Jose, CA") == "San Jose, CA"
+
+
 def test_infer_service_from_row_prefers_row_content():
     row = {
         "name": "Acme Plumbing LLC",

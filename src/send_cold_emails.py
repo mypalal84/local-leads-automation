@@ -516,6 +516,8 @@ def format_town_for_copy(town):
     town = normalize_text_value(town)
     if not town:
         return "your area"
+    if re.search(r",\s*[A-Za-z]{2}$", town):
+        return town
     parts = town.split()
     if len(parts) >= 2 and len(parts[-1]) == 2 and parts[-1].isalpha():
         return f"{' '.join(parts[:-1])}, {parts[-1].upper()}"
