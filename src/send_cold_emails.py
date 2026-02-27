@@ -97,6 +97,18 @@ EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 GENERIC_LOCAL_PARTS = {
     "info", "admin", "support", "sales", "contact", "office", "hello", "team", "service", "customerservice"
 }
+LIKELY_FIRST_NAMES = {
+    "aaron", "adam", "alex", "alexander", "alexis", "alice", "amanda", "amy", "andrew", "andy",
+    "anna", "anthony", "ashley", "austin", "ben", "brandon", "brian", "brittany", "cameron", "carol",
+    "charles", "chris", "christina", "dan", "daniel", "david", "derek", "diana", "emily", "emma",
+    "eric", "ethan", "evan", "frank", "gabriel", "grace", "hannah", "heather", "ian", "jack",
+    "jacob", "james", "jason", "jeff", "jen", "jennifer", "jeremy", "jessica", "john", "jon",
+    "jordan", "joseph", "josh", "justin", "karen", "kate", "katherine", "kevin", "kyle", "laura",
+    "lauren", "linda", "lisa", "mark", "matt", "megan", "michael", "michelle", "mike", "morgan",
+    "nancy", "natalie", "nick", "olivia", "pat", "patrick", "paul", "peter", "rachel", "randall",
+    "ryan", "samantha", "sam", "sarah", "scott", "sean", "stephanie", "steve", "susan", "thomas",
+    "tim", "tyler", "veronica", "victoria", "will", "william", "zach",
+}
 AUTO_REPLY_SUBJECT_TOKENS = [
     "automatic reply", "auto reply", "out of office", "ooo", "away from the office", "vacation"
 ]
@@ -228,14 +240,27 @@ def extract_contact_name(email_addr):
     parts = [part.strip() for part in re.split(r"[._+\-]", local_part) if part.strip()]
     if not parts:
         return "there"
-    if len(parts) == 1:
-        return "there"
     token = parts[0]
+    if len(parts) == 1 and token not in LIKELY_FIRST_NAMES:
+        return "there"
     if not token or token in GENERIC_LOCAL_PARTS:
         return "there"
     if not token.isalpha() or len(token) < 2:
         return "there"
     return token.capitalize()
+
+
+def build_subject_line(business, contact_name, town):
+    contact_name = (contact_name or "there").strip()
+    templates = SUBJECTS
+    if contact_name.lower() == "there":
+        templates = [template for template in SUBJECTS if "{contact_name}" not in template]
+    template = random.choice(templates or SUBJECTS)
+    return template.format(
+        business=business,
+        contact_name=contact_name,
+        town=format_town_for_copy(town),
+    )
 
 def remove_from_log(replied_emails):
     if not os.path.exists(SENT_LOG): return
@@ -718,11 +743,7 @@ def send_cold_emails(csv_file=None):
 
                 business = clean_business_name(row.get("name", ""), recipient_email=email_field)
                 contact_name = extract_contact_name(email_field)
-                subject = random.choice(SUBJECTS).format(
-                    business=business,
-                    contact_name=contact_name,
-                    town=format_town_for_copy(town),
-                )
+                subject = build_subject_line(business=business, contact_name=contact_name, town=town)
                 lead_service = infer_service_from_row(row, service)
                 body = build_email_body(
                     business=business,

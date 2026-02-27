@@ -157,8 +157,22 @@ def test_build_email_body_includes_unsubscribe_footer(monkeypatch):
 
 def test_extract_contact_name_from_email():
     assert sce.extract_contact_name("andy.maclean@owenscorning.com") == "Andy"
+    assert sce.extract_contact_name("morgan@jazzhouse.org") == "Morgan"
     assert sce.extract_contact_name("info@company.com") == "there"
+    assert sce.extract_contact_name("bbooth@yelp.com") == "there"
     assert sce.extract_contact_name("jrace@allenthomasgroup.com") == "there"
+
+
+def test_build_subject_line_avoids_contact_name_template_for_unknown_name(monkeypatch):
+    monkeypatch.setattr(sce.random, "choice", lambda seq: seq[0])
+    subject = sce.build_subject_line("Acme Roofing", "there", "San Jose Ca")
+    assert "there," not in subject.lower()
+
+
+def test_build_subject_line_can_use_contact_name_template_when_known(monkeypatch):
+    monkeypatch.setattr(sce.random, "choice", lambda _seq: "{contact_name}, quick idea for {business}")
+    subject = sce.build_subject_line("Acme Roofing", "Andy", "San Jose Ca")
+    assert subject == "Andy, quick idea for Acme Roofing"
 
 
 def test_build_email_body_uses_contact_name():
