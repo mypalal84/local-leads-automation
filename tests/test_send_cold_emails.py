@@ -170,6 +170,26 @@ def test_format_town_for_copy_adds_state_comma():
     assert sce.format_town_for_copy("San Jose Ca") == "San Jose, CA"
 
 
+def test_infer_service_from_row_prefers_row_content():
+    row = {
+        "name": "Acme Plumbing LLC",
+        "notes": "Emergency drain and sewer repair",
+        "link": "",
+        "website": "",
+    }
+    assert sce.infer_service_from_row(row, "Roofers") == "plumbing"
+
+
+def test_infer_service_from_row_falls_back_when_unknown():
+    row = {
+        "name": "Acme Business",
+        "notes": "Trusted local team",
+        "link": "",
+        "website": "",
+    }
+    assert sce.infer_service_from_row(row, "Roofers") == "Roofers"
+
+
 def test_build_personalized_opener_prefers_notes():
     opener = sce.build_personalized_opener("Trusted roofer serving Bay Area homeowners since 2008.", "Roofers")
     assert opener.startswith("Noticed ")

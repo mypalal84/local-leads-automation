@@ -75,6 +75,24 @@ NON_BUSINESS_TEXT_HINTS = [
     "university", "department of", "federal", "government", "wikipedia",
     "directory", "reviews", "top 10", "wiki", "| page",
 ]
+SERVICE_KEYWORDS = [
+    ("roof", "roofing"),
+    ("plumb", "plumbing"),
+    ("hvac", "HVAC"),
+    ("heat", "HVAC"),
+    ("cool", "HVAC"),
+    ("landscap", "landscaping"),
+    ("lawn", "landscaping"),
+    ("paint", "painting"),
+    ("window clean", "window cleaning"),
+    ("cleaning", "cleaning"),
+    ("floor", "flooring"),
+    ("pest", "pest control"),
+    ("fence", "fence installation"),
+    ("electric", "electrical"),
+    ("florist", "floristry"),
+    ("massage", "massage therapy"),
+]
 EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 GENERIC_LOCAL_PARTS = {
     "info", "admin", "support", "sales", "contact", "office", "hello", "team", "service", "customerservice"
@@ -479,6 +497,23 @@ def format_town_for_copy(town):
     return town
 
 
+def infer_service_from_row(row, fallback_service=""):
+    fallback_service = normalize_text_value(fallback_service)
+    fields = [
+        normalize_text_value(row.get("name", "")),
+        normalize_text_value(row.get("notes", "")),
+        normalize_text_value(row.get("link", "")),
+        normalize_text_value(row.get("website", "")),
+    ]
+    blob = " ".join(fields).lower()
+
+    for token, label in SERVICE_KEYWORDS:
+        if token in blob:
+            return label
+
+    return fallback_service
+
+
 def build_personalized_opener(notes, service):
     notes_text = normalize_text_value(notes)
     if notes_text:
@@ -677,10 +712,11 @@ def send_cold_emails(csv_file=None):
                     contact_name=contact_name,
                     town=format_town_for_copy(town),
                 )
+                lead_service = infer_service_from_row(row, service)
                 body = build_email_body(
                     business=business,
                     town=town,
-                    service=service,
+                    service=lead_service,
                     contact_name=contact_name,
                     notes=row.get("notes", ""),
                 )
