@@ -165,6 +165,28 @@ def test_build_email_body_uses_contact_name():
     assert body.startswith("Hi Andy,")
 
 
+def test_format_town_for_copy_adds_state_comma():
+    assert sce.format_town_for_copy("San Jose Ca") == "San Jose, CA"
+
+
+def test_build_personalized_opener_prefers_notes():
+    opener = sce.build_personalized_opener("Trusted roofer serving Bay Area homeowners since 2008.", "Roofers")
+    assert opener.startswith("Noticed ")
+
+
+def test_build_email_body_includes_personalized_opener_and_formatted_town():
+    body = sce.build_email_body(
+        "Bay View Roofing",
+        "San Jose Ca",
+        "Roofers",
+        contact_name="Andy",
+        notes="Trusted roofer serving Bay Area homeowners since 2008.",
+    )
+    assert "Hi Andy," in body
+    assert "Noticed " in body
+    assert "in San Jose, CA" in body
+
+
 def test_domain_cap_limits_sends_per_domain(tmp_path, monkeypatch):
     data_dir = pathlib.Path(tmp_path)
     csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"

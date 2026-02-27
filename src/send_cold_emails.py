@@ -105,8 +105,9 @@ SUBJECTS = [
     "{business}: quick note",
 ]
 
-BODY_TEMPLATE = """Hi {business},
+BODY_TEMPLATE = """Hi {contact_name},
 
+{opener_line}
 I came across {business} while checking {service} providers in {town}.
 I help local owners like you launch professional, mobile‑friendly websites that attract more calls — within 7 days.
 
@@ -458,13 +459,41 @@ def should_skip_domain_mismatch(row, email_field):
     return True, f"domain_mismatch:{recipient_domain}!={business_domain}"
 
 
-def build_email_body(business, town, service, contact_name="there"):
-    base_template = BODY_TEMPLATE.replace("Hi {business},", "Hi {contact_name},")
-    base = base_template.format(
+def format_town_for_copy(town):
+    town = normalize_text_value(town)
+    if not town:
+        return "your area"
+    parts = town.split()
+    if len(parts) >= 2 and len(parts[-1]) == 2 and parts[-1].isalpha():
+        return f"{' '.join(parts[:-1])}, {parts[-1].upper()}"
+    return town
+
+
+def build_personalized_opener(notes, service):
+    notes_text = normalize_text_value(notes)
+    if notes_text:
+        compact = re.sub(r"\s+", " ", notes_text).strip()
+        compact = re.sub(r"https?://\S+", "", compact).strip()
+        first_sentence = re.split(r"[.!?]", compact)[0].strip(" -,:;")
+        if len(first_sentence) >= 16:
+            if len(first_sentence) > 100:
+                first_sentence = first_sentence[:100].rstrip() + "…"
+            return f"Noticed {first_sentence[0].lower() + first_sentence[1:]}."
+
+    service_text = normalize_text_value(service).replace("/", " and ")
+    service_text = re.sub(r"\s+", " ", service_text).strip().lower()
+    if service_text:
+        return f"I work with local {service_text} businesses to turn more searches into qualified calls."
+    return "I work with local businesses to turn more searches into qualified calls."
+
+
+def build_email_body(business, town, service, contact_name="there", notes=""):
+    base = BODY_TEMPLATE.format(
         business=business,
-        town=town,
+        town=format_town_for_copy(town),
         service=service,
         contact_name=(contact_name or "there"),
+        opener_line=build_personalized_opener(notes, service),
     )
     if UNSUBSCRIBE_FOOTER:
         return f"{base}\n\n{UNSUBSCRIBE_FOOTER}"
@@ -553,6 +582,7 @@ def send_cold_emails(csv_file=None):
                     town=town,
                     service=service,
                     contact_name=contact_name,
+                    notes=row.get("notes", ""),
                 )
 
                 msg = MIMEText(body, "plain", "utf-8")
