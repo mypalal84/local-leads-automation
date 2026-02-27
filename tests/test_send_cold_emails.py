@@ -184,7 +184,7 @@ def test_build_email_body_includes_personalized_opener_and_formatted_town():
     )
     assert "Hi Andy," in body
     assert "Noticed " in body
-    assert "in San Jose, CA" in body
+    assert "I help local owners like you launch professional, mobile‑friendly websites" in body
 
 
 def test_build_personalized_opener_falls_back_for_caption_like_notes():
