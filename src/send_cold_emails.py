@@ -45,6 +45,7 @@ LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
 PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
 BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
+DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If you'd prefer not to hear from me again, reply STOP and I will remove you immediately.",
@@ -562,10 +563,11 @@ def send_cold_emails(csv_file=None):
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
     print(f"[INFO] Lead score threshold: {LEAD_SCORE_THRESHOLD}")
     print(f"[INFO] Domain cap: {MAX_EMAILS_PER_DOMAIN} | Block generic inboxes: {BLOCK_GENERIC_INBOXES}")
+    if DRY_RUN:
+        print("[INFO] Sender DRY_RUN enabled: previewing emails without SMTP send.")
 
-    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
-        server.login(EMAIL_ADDR, EMAIL_PASS)
-
+    def process_rows(server=None):
+        nonlocal remaining_quota
         with open(csv_file, newline="", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
@@ -623,6 +625,17 @@ def send_cold_emails(csv_file=None):
                 msg = MIMEText(body, "plain", "utf-8")
                 msg["Subject"], msg["From"], msg["To"] = subject, EMAIL_ADDR, email_field
 
+                if DRY_RUN:
+                    body_preview = "\n".join(body.splitlines()[:8])
+                    print(f"[DRY-SEND] {business} → {email_field} | {subject}")
+                    print(f"[DRY-BODY]\n{body_preview}\n---")
+                    domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
+                    remaining_quota -= 1
+                    if remaining_quota <= 0:
+                        print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
+                        break
+                    continue
+
                 try:
                     server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
                     append_to_log(email_field)
@@ -637,7 +650,18 @@ def send_cold_emails(csv_file=None):
                 except Exception as e:
                     print(f"[ERR] {email_field}: {e}")
 
+    if DRY_RUN:
+        process_rows(server=None)
+    else:
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
+            server.login(EMAIL_ADDR, EMAIL_PASS)
+            process_rows(server=server)
+
     print("[INFO] Outbound cold-email batch finished.\n")
+    if DRY_RUN:
+        print("[INFO] Sender DRY_RUN: skipping reply-check cleanup.")
+        return
+
     replied = fetch_replies()  # cleanup
     if replied:
         remove_from_log(replied)

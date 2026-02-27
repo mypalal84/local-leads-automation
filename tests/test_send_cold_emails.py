@@ -248,6 +248,7 @@ def test_block_generic_inboxes(tmp_path, monkeypatch):
     monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
     monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
     monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
     monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
     monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
     monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", True)
@@ -264,6 +265,50 @@ def test_block_generic_inboxes(tmp_path, monkeypatch):
 
     assert ("owner@example.com",) in smtp.sent
     assert ("info@example.com",) not in smtp.sent
+
+
+def test_sender_dry_run_skips_smtp_send(tmp_path, monkeypatch, capsys):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Roofers_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "notes", "website", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Bay View Roofing, Inc. | Yelp",
+                "emails": "owner@bayviewroofinginc.com",
+                "notes": "Trusted roofer serving local homeowners since 2008.",
+                "website": "https://www.bayviewroofinginc.com",
+                "link": "https://www.bayviewroofinginc.com",
+            }
+        )
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", False)
+    monkeypatch.setattr(sce, "DRY_RUN", True)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce, "fetch_replies", lambda: {"should_not_be_called@example.com"})
+
+    smtp = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp)
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+    out = capsys.readouterr().out
+
+    assert "[DRY-SEND]" in out
+    assert "[DRY-BODY]" in out
+    assert "skipping reply-check cleanup" in out
+    assert smtp.sent == []
 
 
 def test_is_auto_reply_detects_subject_token():
