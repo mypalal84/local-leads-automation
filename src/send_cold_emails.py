@@ -111,6 +111,7 @@ SUBJECTS = [
 BODY_TEMPLATE = """Hi {contact_name},
 
 {opener_line}
+
 I help local owners like you launch professional, mobile‑friendly websites that attract more calls — within 7 days.
 
 {cta_line}
