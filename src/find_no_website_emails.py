@@ -194,6 +194,25 @@ def has_live_website(domain):
         pass
     return False
 
+
+def is_confirmed_business_website(url_or_domain: str, business_name: str = "") -> bool:
+    value = (url_or_domain or "").strip().lower()
+    if not value:
+        return False
+
+    parsed = urlparse(value if "://" in value else f"http://{value}")
+    domain = (parsed.netloc or parsed.path or "").lower().replace("www.", "").strip()
+    if not domain or "." not in domain:
+        return False
+
+    if any(domain == d or domain.endswith(f".{d}") for d in DIRECTORY_DOMAIN_HINTS):
+        return False
+
+    if domain.endswith(".gov") or domain.endswith(".edu"):
+        return False
+
+    return has_live_website(domain)
+
 # ======================================================
 # HUNTER LOOKUP
 # ======================================================
@@ -290,11 +309,12 @@ def enrich(service, town, max_leads=None):
         for _, row in df.iterrows():
             website_val = row.get("website", "")
             existing_website = "" if pd.isna(website_val) else str(website_val).strip()
+            name = str(row.get("name", "")).strip()
 
             if existing_website:
                 skipped_site += 1
-                name = str(row.get("name", "")).strip() or "(unknown)"
-                print(f"[SKIP-API] Existing website present for {name}: {existing_website}")
+                safe_name = name or "(unknown)"
+                print(f"[SKIP-API] Existing website present for {safe_name}: {existing_website}")
                 continue
 
             if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):
@@ -307,41 +327,37 @@ def enrich(service, town, max_leads=None):
                     print(f"[SCORE-FILTER] Skipping enrichment calls for {name}")
                 continue
 
-            name = str(row.get("name", "")).strip()
             query = f"{name} {town} {service} contact OR email"
             links = search_serper(query)
             emails_found = []
-            site_found = None
+            confirmed_site = ""
 
             for link in links:
                 domain = urlparse(link).netloc.lower()
                 if not domain:
                     continue
 
-                # Immediately skip if it looks like a personal site
-                if has_live_website(domain):
-                    skipped_site += 1
-                    if DEBUG: print(f"[SKIP] Live site: {domain}")
-                    site_found = f"http://{domain}"
+                if is_confirmed_business_website(domain, business_name=name):
+                    confirmed_site = f"http://{domain}"
+                    if DEBUG:
+                        print(f"[SKIP] Confirmed business website: {domain}")
                     break
 
                 emails = hunter_email_lookup(domain)
                 if emails:
                     emails_found = emails
-                    site_found = f"http://{domain}"
                     break
 
-            if site_found and has_live_website(urlparse(site_found).netloc):
-                # double‑check before logging email
+            if confirmed_site:
                 skipped_site += 1
                 if DEBUG:
-                    print(f"[SKIP2] {site_found} already live.")
+                    print(f"[SKIP2] {confirmed_site} already live.")
                 continue
 
             if emails_found:
                 found_emails += 1
                 row["emails"] = ", ".join(emails_found)
-                row["website"] = site_found or ""
+                row["website"] = ""
                 enriched.append(row)
             else:
                 # keep if truly no site/email found (potential cold)

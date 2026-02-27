@@ -296,3 +296,52 @@ def test_existing_website_row_skips_api_calls(tmp_path, monkeypatch):
     assert out_path is None
     assert calls["search"] == 0
     assert calls["hunter"] == 0
+
+
+def test_is_confirmed_business_website_rejects_directory_domain(monkeypatch):
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: True)
+    assert enrich_mod.is_confirmed_business_website("https://www.houzz.com/professionals/example") is False
+
+
+def test_is_confirmed_business_website_accepts_live_non_directory_domain(monkeypatch):
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda domain: domain == "callmilestone.com")
+    assert enrich_mod.is_confirmed_business_website("https://callmilestone.com/duncanville/") is True
+
+
+def test_enrich_keeps_website_empty_when_email_found_on_unconfirmed_domain(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Acme Fencing",
+                "emails": "",
+                "website": "",
+                "notes": "",
+                "link": "",
+            }
+        )
+
+    monkeypatch.setattr(enrich_mod, "search_serper", lambda _query: ["https://example.com/contact"])
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", lambda _domain: ["owner@acmefencing.com"])
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+
+    out_df = pd.read_csv(in_path)
+    assert len(out_df) == 1
+    assert out_df.loc[0, "emails"] == "owner@acmefencing.com"
+    assert str(out_df.loc[0, "website"]).strip() in {"", "nan"}
