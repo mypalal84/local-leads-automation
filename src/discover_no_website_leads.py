@@ -80,11 +80,13 @@ NON_BUSINESS_DOMAIN_HINTS = {
     "zocdoc.com", "healthgrades.com", "webmd.com", "mapquest.com", "yellowpages.com",
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com", "manta.com",
     "zoominfo.com", "fandom.com", "wikimedia.org", "elevatorwiki.com", "houzz.com",
+    "tiktok.com",
 }
 
 NON_BUSINESS_TEXT_HINTS = [
     "[pdf]", "pdf", "jobs", "job", "employment", "salary", "career", "careers",
     "university", "department of", "federal", "government", "wikipedia", "curriculum vitae",
+    " seo", "search engine optimization", "digital marketing", "marketing agency",
 ]
 
 
@@ -231,20 +233,28 @@ def is_probably_real_website(link: str, business_name: str = "") -> bool:
     if "google.com" in domain and "business.site" not in link:
         return False
 
+    # Strong heuristic: if result points to a non-directory domain, assume website exists.
+    # This avoids missing valid business sites when HTTP probing is blocked or unreliable.
+    if "." in domain:
+        return True
+
     # If the business name appears in the domain, likely a real business site
     clean_name = re.sub(r"[^a-z0-9]", "", business_name.lower())
     clean_domain = re.sub(r"[^a-z0-9]", "", domain.replace("www.", "").split(".")[0])
     if clean_name and clean_name in clean_domain:
         return True
 
-    # Quick probe — is this an actual functional homepage?
-    try:
-        resp = requests.get(f"http://{domain}", headers=HEADERS, timeout=4)
-        if resp.status_code == 200:
-            if re.search(r"(home|welcome to|services|about us)", resp.text[:3000], re.I):
-                return True
-    except Exception:
-        pass
+    # Quick probe — is this an actual functional site?
+    for candidate in (f"https://{domain}", f"http://{domain}"):
+        try:
+            resp = requests.get(candidate, headers=HEADERS, timeout=6, allow_redirects=True)
+            if 200 <= resp.status_code < 400:
+                content_type = (resp.headers.get("Content-Type", "") or "").lower()
+                body = (resp.text or "")[:3000]
+                if "html" in content_type or re.search(r"<html|<!doctype", body, re.I):
+                    return True
+        except Exception:
+            continue
 
     return False
 
@@ -338,6 +348,12 @@ def discover(service: str, town: str):
             time.sleep(0.5)
 
         if not leads:
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                    print(f"[CLEANUP] Removed stale discovery file: {out_path}")
+                except Exception as cleanup_err:
+                    print(f"[WARN] Could not remove stale discovery file: {cleanup_err}")
             print(f"[WARN] All potential results had websites for {town} | {service}")
             return None
 

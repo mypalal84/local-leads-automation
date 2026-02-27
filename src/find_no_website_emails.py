@@ -184,14 +184,23 @@ def search_serper(query):
 # ======================================================
 def has_live_website(domain):
     """Quickly check if the domain responds with status 200/OK + visible homepage text."""
-    try:
-        if not domain:
-            return False
-        resp = requests.get(f"http://{domain}", headers=HEADERS, timeout=5)
-        if resp.status_code == 200 and re.search(r"<html|<!doctype", resp.text[:3000], re.I):
-            return True
-    except Exception:
-        pass
+    if not domain:
+        return False
+
+    clean_domain = (domain or "").strip().lower().replace("www.", "")
+    if not clean_domain:
+        return False
+
+    for candidate in (f"https://{clean_domain}", f"http://{clean_domain}"):
+        try:
+            resp = requests.get(candidate, headers=HEADERS, timeout=6, allow_redirects=True)
+            if 200 <= resp.status_code < 400:
+                content_type = (resp.headers.get("Content-Type", "") or "").lower()
+                body = (resp.text or "")[:3000]
+                if "html" in content_type or re.search(r"<html|<!doctype", body, re.I):
+                    return True
+        except Exception:
+            continue
     return False
 
 

@@ -51,6 +51,14 @@ def test_is_probably_real_website_directory_domains_false(tmp_path, monkeypatch)
     assert module.is_probably_real_website("https://www.yelp.com/biz/demo", "Demo Biz") is False
 
 
+def test_is_probably_real_website_non_directory_domain_true(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    assert module.is_probably_real_website("https://bayviewroofinginc.com/", "Bay View Roofing") is True
+
+
 def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
@@ -98,6 +106,34 @@ def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     assert df.iloc[0]["name"] == "Good Lead"
 
 
+def test_discover_removes_stale_output_when_no_leads(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_serper_search", lambda _q: [
+        {
+            "title": "Acme Roofing",
+            "link": "https://acme-roofing.com",
+            "snippet": "Local roofing",
+        }
+    ])
+    monkeypatch.setattr(module, "is_probably_real_website", lambda _link, _name="": True)
+
+    service = "Roofers"
+    town = "San Jose, CA"
+    safe_city = "San_Jose_CA"
+    safe_service = "Roofers"
+    out_path = pathlib.Path(module.DATA_DIR) / f"leads_{safe_city}_{safe_service}_NO_WEBSITE_{module.date.today().strftime('%Y-%m-%d')}.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("name,link,website,email,notes\nold,https://old.com,,,old\n", encoding="utf-8")
+
+    result = module.discover(service, town)
+    assert result is None
+    assert not out_path.exists()
+
+
 def test_should_skip_non_business_result_flags_pdf_and_jobboard(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
@@ -134,6 +170,30 @@ def test_should_skip_non_business_result_flags_aggregator_domains(tmp_path, monk
         "Top-Rated Tree Services",
         "https://www.homeadvisor.com/c.tree-service",
         "HomeAdvisor providers"
+    ) is True
+
+
+def test_should_skip_non_business_result_flags_tiktok_domain(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    assert module.should_skip_non_business_result(
+        "Our roofer is putting in the work! ... | TikTok",
+        "https://www.tiktok.com/@caruzoroofingcontractors/video/7550877614882213134",
+        "Short video clip"
+    ) is True
+
+
+def test_should_skip_non_business_result_flags_seo_marketing_content(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    assert module.should_skip_non_business_result(
+        "San Jose Roofing Companies SEO",
+        "https://roofing.bullberry.com/services/city/san-jose-ca",
+        "local SEO for roofers in San Jose"
     ) is True
 
 
