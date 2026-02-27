@@ -187,16 +187,34 @@ def test_build_email_body_includes_personalized_opener_and_formatted_town():
     assert "in San Jose, CA" in body
 
 
+def test_build_personalized_opener_falls_back_for_caption_like_notes():
+    opener = sce.build_personalized_opener(
+        "Roofing installation above coastal homes with ocean view and clear sky",
+        "Roofers",
+    )
+    assert "especially in roofing" in opener
+
+
+def test_build_email_body_uses_clearer_default_unsubscribe_copy(monkeypatch):
+    monkeypatch.setattr(
+        sce,
+        "UNSUBSCRIBE_FOOTER",
+        "If this isn't relevant, reply STOP and I'll remove you from future emails.",
+    )
+    body = sce.build_email_body("Acme", "Denver, CO", "Plumbing", contact_name="Alex")
+    assert "If this isn't relevant, reply STOP and I'll remove you from future emails." in body
+
+
 def test_clean_business_name_removes_directory_suffixes():
     raw = "Bay View Roofing, Inc.: Roofing Experts in San Francisco | Yelp"
     assert sce.clean_business_name(raw) == "Bay View Roofing, Inc."
 
 
-def test_build_service_cta_line_varies_by_service():
+def test_build_service_cta_line_points_to_website():
     roofing_cta = sce.build_service_cta_line("Roofers")
     dental_cta = sce.build_service_cta_line("Dentists")
-    assert "quote-ready calls" in roofing_cta
-    assert "appointment-ready pages" in dental_cta
+    assert roofing_cta == "If you're curious, you can see my work at www.zbadigital.com."
+    assert dental_cta == roofing_cta
 
 
 def test_domain_cap_limits_sends_per_domain(tmp_path, monkeypatch):

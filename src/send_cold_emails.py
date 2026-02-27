@@ -48,7 +48,7 @@ BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
-    "If you'd prefer not to hear from me again, reply STOP and I will remove you immediately.",
+    "If this isn't relevant, reply STOP and I'll remove you from future emails.",
 )
 DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{datetime.now().strftime('%Y-%m-%d')}.csv")
 NEGATIVE_REPLY_KEYWORDS = [
@@ -481,14 +481,36 @@ def build_personalized_opener(notes, service):
         compact = re.sub(r"https?://\S+", "", compact).strip()
         first_sentence = re.split(r"[.!?]", compact)[0].strip(" -,:;")
         if len(first_sentence) >= 16:
+            sentence_lower = first_sentence.lower()
+            low_signal_tokens = [
+                "image", "photo", "logo", "banner", "above", "with ocean view",
+                "stock", "vector", "wallpaper", "freepik", "shutterstock",
+            ]
+            high_signal_tokens = [
+                "serving", "specializ", "family", "licensed", "insured", "years",
+                "since", "locally", "owned", "residential", "commercial", "reviews",
+            ]
+            if any(token in sentence_lower for token in low_signal_tokens) and not any(
+                token in sentence_lower for token in high_signal_tokens
+            ):
+                first_sentence = ""
+
+        if len(first_sentence) >= 16:
             if len(first_sentence) > 100:
                 first_sentence = first_sentence[:100].rstrip() + "…"
             return f"Noticed {first_sentence[0].lower() + first_sentence[1:]}."
 
     service_text = normalize_text_value(service).replace("/", " and ")
     service_text = re.sub(r"\s+", " ", service_text).strip().lower()
+    service_phrase = service_text
+    if "roof" in service_text:
+        service_phrase = "roofing"
+    elif "plumb" in service_text:
+        service_phrase = "plumbing"
+    elif "hvac" in service_text:
+        service_phrase = "HVAC"
     if service_text:
-        return f"I work with local {service_text} businesses to turn more searches into qualified calls."
+        return f"I work with local businesses to turn more searches into qualified calls, especially in {service_phrase}."
     return "I work with local businesses to turn more searches into qualified calls."
 
 
@@ -510,12 +532,7 @@ def clean_business_name(raw_name):
 
 
 def build_service_cta_line(service):
-    service_text = normalize_text_value(service).lower()
-    if any(token in service_text for token in ["roof", "hvac", "plumb", "electric", "contract", "remodel"]):
-        return "If helpful, I can share a quick 2-minute homepage teardown focused on quote-ready calls."
-    if any(token in service_text for token in ["dent", "chiro", "therapy", "clinic", "health", "massage"]):
-        return "If helpful, I can share a quick 2-minute teardown focused on appointment-ready pages."
-    return "If helpful, I can share a quick 2-minute teardown focused on turning visits into real inquiries."
+    return "If you're curious, you can see my work at www.zbadigital.com."
 
 
 def build_email_body(business, town, service, contact_name="there", notes=""):
