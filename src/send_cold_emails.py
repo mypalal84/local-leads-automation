@@ -414,6 +414,37 @@ def should_skip_non_business_lead(row, email_field):
     return False, "ok"
 
 
+def extract_domain_from_url(raw_url):
+    raw_url = normalize_text_value(raw_url).lower()
+    if not raw_url:
+        return ""
+    parsed = urlparse(raw_url)
+    domain = (parsed.netloc or "").lower().replace("www.", "")
+    return domain
+
+
+def should_skip_domain_mismatch(row, email_field):
+    email_field = (email_field or "").strip().lower()
+    if "@" not in email_field:
+        return False, "ok"
+
+    recipient_domain = email_field.split("@")[-1]
+
+    website_domain = extract_domain_from_url(row.get("website", ""))
+    link_domain = extract_domain_from_url(row.get("link", ""))
+    business_domain = website_domain or link_domain
+    if not business_domain:
+        return False, "ok"
+
+    if recipient_domain == business_domain or recipient_domain.endswith(f".{business_domain}"):
+        return False, "ok"
+
+    if business_domain.endswith(f".{recipient_domain}"):
+        return False, "ok"
+
+    return True, f"domain_mismatch:{recipient_domain}!={business_domain}"
+
+
 def build_email_body(business, town, service):
     base = BODY_TEMPLATE.format(business=business, town=town, service=service)
     if UNSUBSCRIBE_FOOTER:
@@ -483,6 +514,11 @@ def send_cold_emails(csv_file=None):
                 should_skip, reason = should_skip_non_business_lead(row, email_field)
                 if should_skip:
                     print(f"[QUALITY] Skipping {email_field} ({reason})")
+                    continue
+
+                mismatch_skip, mismatch_reason = should_skip_domain_mismatch(row, email_field)
+                if mismatch_skip:
+                    print(f"[QUALITY] Skipping {email_field} ({mismatch_reason})")
                     continue
 
                 lead_score = score_lead(row, email_field)

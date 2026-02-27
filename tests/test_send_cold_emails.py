@@ -346,3 +346,27 @@ def test_should_skip_non_business_lead_for_directory_text_pattern():
     skip, reason = sce.should_skip_non_business_lead(row, "owner@example-business.com")
     assert skip is True
     assert reason == "non_business_text_hint"
+
+
+def test_should_skip_domain_mismatch_blocks_unrelated_recipient_domain():
+    row = {
+        "name": "Bay View Roofing, Inc.",
+        "website": "https://www.bayviewroofinginc.com/",
+        "link": "https://bayviewroofinginc.com/",
+        "notes": "",
+    }
+    skip, reason = sce.should_skip_domain_mismatch(row, "andy.maclean@owenscorning.com")
+    assert skip is True
+    assert reason.startswith("domain_mismatch:")
+
+
+def test_should_skip_domain_mismatch_allows_matching_domain():
+    row = {
+        "name": "Bay View Roofing, Inc.",
+        "website": "https://www.bayviewroofinginc.com/",
+        "link": "https://bayviewroofinginc.com/",
+        "notes": "",
+    }
+    skip, reason = sce.should_skip_domain_mismatch(row, "owner@bayviewroofinginc.com")
+    assert skip is False
+    assert reason == "ok"
