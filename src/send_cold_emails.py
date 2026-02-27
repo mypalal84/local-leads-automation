@@ -195,6 +195,19 @@ def is_generic_inbox(email_addr):
     local_part = email_addr.split("@")[0]
     return local_part in GENERIC_LOCAL_PARTS
 
+
+def extract_contact_name(email_addr):
+    email_addr = (email_addr or "").strip().lower()
+    if "@" not in email_addr:
+        return "there"
+    local_part = email_addr.split("@")[0]
+    token = re.split(r"[._+\-]", local_part)[0].strip()
+    if not token or token in GENERIC_LOCAL_PARTS:
+        return "there"
+    if not token.isalpha() or len(token) < 2:
+        return "there"
+    return token.capitalize()
+
 def remove_from_log(replied_emails):
     if not os.path.exists(SENT_LOG): return
     df = pd.read_csv(SENT_LOG, header=None, names=["email"])
@@ -445,8 +458,14 @@ def should_skip_domain_mismatch(row, email_field):
     return True, f"domain_mismatch:{recipient_domain}!={business_domain}"
 
 
-def build_email_body(business, town, service):
-    base = BODY_TEMPLATE.format(business=business, town=town, service=service)
+def build_email_body(business, town, service, contact_name="there"):
+    base_template = BODY_TEMPLATE.replace("Hi {business},", "Hi {contact_name},")
+    base = base_template.format(
+        business=business,
+        town=town,
+        service=service,
+        contact_name=(contact_name or "there"),
+    )
     if UNSUBSCRIBE_FOOTER:
         return f"{base}\n\n{UNSUBSCRIBE_FOOTER}"
     return base
@@ -528,7 +547,13 @@ def send_cold_emails(csv_file=None):
 
                 business = row.get("name","your company").strip()
                 subject = random.choice(SUBJECTS).format(business=business)
-                body = build_email_body(business=business, town=town, service=service)
+                contact_name = extract_contact_name(email_field)
+                body = build_email_body(
+                    business=business,
+                    town=town,
+                    service=service,
+                    contact_name=contact_name,
+                )
 
                 msg = MIMEText(body, "plain", "utf-8")
                 msg["Subject"], msg["From"], msg["To"] = subject, EMAIL_ADDR, email_field

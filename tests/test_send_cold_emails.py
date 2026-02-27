@@ -151,8 +151,18 @@ def test_score_lead_ignores_nan_website_value():
 
 def test_build_email_body_includes_unsubscribe_footer(monkeypatch):
     monkeypatch.setattr(sce, "UNSUBSCRIBE_FOOTER", "Reply STOP to unsubscribe.")
-    body = sce.build_email_body("Acme", "Denver, CO", "Plumbing")
+    body = sce.build_email_body("Acme", "Denver, CO", "Plumbing", contact_name="Alex")
     assert "Reply STOP to unsubscribe." in body
+
+
+def test_extract_contact_name_from_email():
+    assert sce.extract_contact_name("andy.maclean@owenscorning.com") == "Andy"
+    assert sce.extract_contact_name("info@company.com") == "there"
+
+
+def test_build_email_body_uses_contact_name():
+    body = sce.build_email_body("Acme Roofing", "Denver, CO", "Roofers", contact_name="Andy")
+    assert body.startswith("Hi Andy,")
 
 
 def test_domain_cap_limits_sends_per_domain(tmp_path, monkeypatch):
