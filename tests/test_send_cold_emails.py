@@ -155,12 +155,20 @@ def test_build_email_body_includes_unsubscribe_footer(monkeypatch):
     assert "Reply STOP to unsubscribe." in body
 
 
-def test_extract_contact_name_from_email():
-    assert sce.extract_contact_name("andy.maclean@owenscorning.com") == "Andy"
-    assert sce.extract_contact_name("morgan@jazzhouse.org") == "Morgan"
-    assert sce.extract_contact_name("info@company.com") == "there"
-    assert sce.extract_contact_name("bbooth@yelp.com") == "there"
-    assert sce.extract_contact_name("jrace@allenthomasgroup.com") == "there"
+@pytest.mark.parametrize(
+    "email_addr, expected_name",
+    [
+        ("andy.maclean@owenscorning.com", "Andy"),
+        ("morgan@jazzhouse.org", "Morgan"),
+        ("veronica.hart@zoominfo.com", "Veronica"),
+        ("info@company.com", "there"),
+        ("help@bbb.org", "there"),
+        ("bbooth@yelp.com", "there"),
+        ("jrace@allenthomasgroup.com", "there"),
+    ],
+)
+def test_extract_contact_name_matrix(email_addr, expected_name):
+    assert sce.extract_contact_name(email_addr) == expected_name
 
 
 def test_build_subject_line_avoids_contact_name_template_for_unknown_name(monkeypatch):
@@ -175,9 +183,46 @@ def test_build_subject_line_can_use_contact_name_template_when_known(monkeypatch
     assert subject == "Andy, quick idea for Acme Roofing"
 
 
+def test_build_subject_line_town_template_has_no_double_comma(monkeypatch):
+    monkeypatch.setattr(sce.random, "choice", lambda _seq: "{town} lead-gen idea for {business}")
+    subject = sce.build_subject_line("Acme Roofing", "there", "San Jose, CA")
+    assert subject == "San Jose, CA lead-gen idea for Acme Roofing"
+    assert ",," not in subject
+
+
 def test_build_email_body_uses_contact_name():
     body = sce.build_email_body("Acme Roofing", "Denver, CO", "Roofers", contact_name="Andy")
     assert body.startswith("Hi Andy,")
+
+
+def test_rendered_email_end_to_end_regression(monkeypatch):
+    row = {
+        "name": "Bay View Roofing, Inc.: Roofing Experts in San Francisco | Yelp",
+        "notes": "Trusted roofer serving Bay Area homeowners since 2008.",
+        "link": "https://bayviewroofinginc.com",
+        "website": "",
+    }
+    email_addr = "morgan@jazzhouse.org"
+
+    contact_name = sce.extract_contact_name(email_addr)
+    business = sce.clean_business_name(row["name"], recipient_email=email_addr)
+    service = sce.infer_service_from_row(row, "Roofers")
+
+    monkeypatch.setattr(sce.random, "choice", lambda _seq: "{town} lead-gen idea for {business}")
+    subject = sce.build_subject_line(business=business, contact_name=contact_name, town="San Jose, CA")
+    body = sce.build_email_body(
+        business=business,
+        town="San Jose, CA",
+        service=service,
+        contact_name=contact_name,
+        notes=row["notes"],
+    )
+
+    assert subject == "San Jose, CA lead-gen idea for Bay View Roofing, Inc."
+    assert ",," not in subject
+    assert body.startswith("Hi Morgan,")
+    assert "Noticed trusted roofer serving Bay Area homeowners since 2008." in body
+    assert "for Bay View Roofing, Inc.?" in body
 
 
 def test_format_town_for_copy_adds_state_comma():
