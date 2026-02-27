@@ -67,6 +67,13 @@ DSN_SUBJECT_TOKENS = [
     "delivery incomplete", "delivery status notification", "undeliverable", "failure notice",
     "mail delivery subsystem", "delivery failure", "message blocked", "message not delivered"
 ]
+HARD_BOUNCE_HINT_TOKENS = [
+    "recipient server did not accept", "failed_precondition", "connect error", "connection refused",
+    "user unknown", "no such user", "mailbox unavailable", "address not found", "invalid recipient"
+]
+SOFT_BOUNCE_HINT_TOKENS = [
+    "temporarily", "try again later", "deferred", "greylist", "rate limit"
+]
 MX_CACHE = {}
 
 # --------------------------------------------------
@@ -261,6 +268,10 @@ def classify_bounce_type(subject, body_text):
     if re.search(r"\b5\d\d\b|\b5\.\d\.\d\b", text):
         return "hard"
     if re.search(r"\b4\d\d\b|\b4\.\d\.\d\b", text):
+        return "soft"
+    if any(token in text for token in HARD_BOUNCE_HINT_TOKENS):
+        return "hard"
+    if any(token in text for token in SOFT_BOUNCE_HINT_TOKENS):
         return "soft"
     return "unknown"
 

@@ -283,3 +283,8 @@ def test_should_send_to_email_rejects_no_mx(monkeypatch):
 def test_classify_bounce_type_hard_and_soft():
     assert sce.classify_bounce_type("Delivery failed", "550 5.1.1 user unknown") == "hard"
     assert sce.classify_bounce_type("Delivery delayed", "451 temporary issue") == "soft"
+
+
+def test_classify_bounce_type_connection_refused_is_hard():
+    body = "The recipient server did not accept our requests to connect. FAILED_PRECONDITION: connect error (111): Connection refused"
+    assert sce.classify_bounce_type("Message not delivered", body) == "hard"
