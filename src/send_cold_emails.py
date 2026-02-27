@@ -514,21 +514,62 @@ def build_personalized_opener(notes, service):
     return "I work with local businesses to turn more searches into qualified calls."
 
 
-def clean_business_name(raw_name):
+def infer_business_name_from_email(email_addr):
+    email_addr = (email_addr or "").strip().lower()
+    if "@" not in email_addr:
+        return ""
+
+    domain = email_addr.split("@")[-1].strip().lower()
+    if not domain:
+        return ""
+
+    core = domain.split(".")[0]
+    if not core:
+        return ""
+
+    explicit_map = {
+        "allenthomasgroup": "Allen Thomas Group",
+        "jazzhouse": "Jazz House",
+        "sturmelevator": "Sturm Elevator",
+        "mccowngordon": "McCown Gordon",
+    }
+    if core in explicit_map:
+        return explicit_map[core]
+
+    normalized = core.replace("-", " ").replace("_", " ")
+    return " ".join(token.capitalize() for token in normalized.split() if token).strip()
+
+
+def clean_business_name(raw_name, recipient_email=""):
     name = normalize_text_value(raw_name)
-    if not name:
-        return "your company"
     for separator in [" | ", " - ", " — "]:
         if separator in name:
             name = name.split(separator)[0].strip()
             break
+
     if ":" in name:
         left, right = name.split(":", 1)
         right_lower = right.lower()
         if any(token in right_lower for token in [" in ", " near ", "best ", "top ", "reviews", "yelp", "angi", "homeadvisor"]):
             name = left.strip()
+
     name = re.sub(r"\s+", " ", name).strip(" ,;:")
-    return name or "your company"
+
+    # Split common glued suffixes (e.g., allenthomasgroup -> Allen Thomas Group)
+    if name and " " not in name and name.lower().isalnum():
+        lower_name = name.lower()
+        suffixes = ["group", "elevator", "roofing", "plumbing", "electric", "construction", "digital", "services", "solutions"]
+        for suffix in suffixes:
+            if lower_name.endswith(suffix) and len(lower_name) > len(suffix) + 2:
+                prefix = lower_name[: -len(suffix)]
+                name = f"{prefix.capitalize()} {suffix.capitalize()}"
+                break
+
+    if name:
+        return name
+
+    inferred = infer_business_name_from_email(recipient_email)
+    return inferred or "your company"
 
 
 def build_service_cta_line(service):
@@ -624,7 +665,7 @@ def send_cold_emails(csv_file=None):
                     print(f"[SCORE] Skipping {email_field} (score={lead_score}, threshold={LEAD_SCORE_THRESHOLD})")
                     continue
 
-                business = clean_business_name(row.get("name", "your company"))
+                business = clean_business_name(row.get("name", ""), recipient_email=email_field)
                 contact_name = extract_contact_name(email_field)
                 subject = random.choice(SUBJECTS).format(
                     business=business,

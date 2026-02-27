@@ -210,6 +210,14 @@ def test_clean_business_name_removes_directory_suffixes():
     assert sce.clean_business_name(raw) == "Bay View Roofing, Inc."
 
 
+def test_clean_business_name_splits_common_glued_suffixes():
+    assert sce.clean_business_name("allenthomasgroup") == "Allenthomas Group"
+
+
+def test_clean_business_name_falls_back_to_recipient_domain_when_missing():
+    assert sce.clean_business_name("", recipient_email="jrace@allenthomasgroup.com") == "Allen Thomas Group"
+
+
 def test_build_service_cta_line_points_to_website():
     roofing_cta = sce.build_service_cta_line("Roofers")
     dental_cta = sce.build_service_cta_line("Dentists")
