@@ -288,3 +288,27 @@ def test_classify_bounce_type_hard_and_soft():
 def test_classify_bounce_type_connection_refused_is_hard():
     body = "The recipient server did not accept our requests to connect. FAILED_PRECONDITION: connect error (111): Connection refused"
     assert sce.classify_bounce_type("Message not delivered", body) == "hard"
+
+
+def test_should_skip_non_business_lead_for_institutional_domain():
+    row = {
+        "name": "[PDF] When East meets West - Yale University",
+        "link": "https://www.yale.edu/some-paper.pdf",
+        "notes": "Yale University PDF",
+        "website": "",
+    }
+    skip, reason = sce.should_skip_non_business_lead(row, "randall.gehle@va.gov")
+    assert skip is True
+    assert reason in {"institutional_domain", "non_business_text_hint"}
+
+
+def test_should_skip_non_business_lead_for_jobboard_title():
+    row = {
+        "name": "250k Construction Jobs, Employment | Indeed",
+        "link": "https://www.indeed.com/jobs?q=construction",
+        "notes": "jobs and employment listings",
+        "website": "",
+    }
+    skip, reason = sce.should_skip_non_business_lead(row, "vickil@indeed.com")
+    assert skip is True
+    assert reason in {"non_business_recipient_domain", "non_business_text_hint"}

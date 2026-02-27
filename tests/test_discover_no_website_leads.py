@@ -58,6 +58,16 @@ def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(module, "run_serper_search", lambda _q: [
         {
+            "title": "[PDF] When East meets West - Yale University",
+            "link": "https://www.yale.edu/some-paper.pdf",
+            "snippet": "Yale University PDF",
+        },
+        {
+            "title": "250k Construction Jobs, Employment | Indeed",
+            "link": "https://www.indeed.com/jobs?q=construction",
+            "snippet": "Construction jobs and employment listings",
+        },
+        {
             "title": "Good Lead",
             "link": "https://example-lead.com",
             "snippet": "Local service provider",
@@ -85,6 +95,28 @@ def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     assert list(df.columns) == ["name", "link", "website", "email", "notes"]
     assert len(df) == 1
     assert df.iloc[0]["name"] == "Good Lead"
+
+
+def test_should_skip_non_business_result_flags_pdf_and_jobboard(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    assert module.should_skip_non_business_result(
+        "[PDF] University Research",
+        "https://www.yale.edu/research/paper.pdf",
+        "PDF file"
+    ) is True
+    assert module.should_skip_non_business_result(
+        "Construction Jobs | Indeed",
+        "https://www.indeed.com/jobs?q=construction",
+        "Employment listings"
+    ) is True
+    assert module.should_skip_non_business_result(
+        "Acme Plumbing",
+        "https://acme-plumbing-denver.com",
+        "Local plumbing service"
+    ) is False
 
 
 def test_run_serper_search_uses_cache(tmp_path, monkeypatch):

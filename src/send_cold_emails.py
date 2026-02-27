@@ -56,6 +56,13 @@ NEGATIVE_REPLY_KEYWORDS = [
 FREE_EMAIL_DOMAINS = {
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"
 }
+NON_BUSINESS_RECIPIENT_DOMAINS = {
+    "indeed.com", "linkedin.com", "wikipedia.org", "va.gov", "usa.gov",
+}
+NON_BUSINESS_TEXT_HINTS = [
+    "[pdf]", "pdf", "jobs", "job", "employment", "salary", "career", "careers",
+    "university", "department of", "federal", "government", "wikipedia",
+]
 EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 GENERIC_LOCAL_PARTS = {
     "info", "admin", "support", "sales", "contact", "office", "hello", "team", "service", "customerservice"
@@ -363,6 +370,27 @@ def score_lead(row, email_field):
     return score
 
 
+def should_skip_non_business_lead(row, email_field):
+    email_field = (email_field or "").strip().lower()
+    if "@" in email_field:
+        domain = email_field.split("@")[-1]
+        if domain.endswith(".gov") or domain.endswith(".edu"):
+            return True, "institutional_domain"
+        if domain in NON_BUSINESS_RECIPIENT_DOMAINS:
+            return True, "non_business_recipient_domain"
+
+    name = normalize_text_value(row.get("name", "")).lower()
+    notes = normalize_text_value(row.get("notes", "")).lower()
+    link = normalize_text_value(row.get("link", "")).lower()
+    website = normalize_text_value(row.get("website", "")).lower()
+    text_blob = f"{name} {notes} {link} {website}"
+
+    if any(token in text_blob for token in NON_BUSINESS_TEXT_HINTS):
+        return True, "non_business_text_hint"
+
+    return False, "ok"
+
+
 def build_email_body(business, town, service):
     base = BODY_TEMPLATE.format(business=business, town=town, service=service)
     if UNSUBSCRIBE_FOOTER:
@@ -427,6 +455,11 @@ def send_cold_emails(csv_file=None):
                 domain = email_field.split("@")[-1]
                 if MAX_EMAILS_PER_DOMAIN > 0 and domain_send_counts.get(domain, 0) >= MAX_EMAILS_PER_DOMAIN:
                     print(f"[DOMAIN-CAP] Skipping {email_field} (domain {domain} cap reached)")
+                    continue
+
+                should_skip, reason = should_skip_non_business_lead(row, email_field)
+                if should_skip:
+                    print(f"[QUALITY] Skipping {email_field} ({reason})")
                     continue
 
                 lead_score = score_lead(row, email_field)

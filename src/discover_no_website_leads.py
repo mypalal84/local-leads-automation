@@ -75,6 +75,19 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; ZBA-LeadBot/1.0; +https://zbadigital.com)"
 }
 
+NON_BUSINESS_DOMAIN_HINTS = {
+    "indeed.com", "linkedin.com", "glassdoor.com", "monster.com", "ziprecruiter.com",
+    "careerbuilder.com", "simplyhired.com", "wikipedia.org", "wikidata.org", "youtube.com",
+    "pinterest.com", "reddit.com", "medium.com", "github.com", "yale.edu", "harvard.edu",
+    "stanford.edu", "mit.edu", "nih.gov", "va.gov", "usa.gov", "cdc.gov", "loc.gov",
+    "zocdoc.com", "healthgrades.com", "webmd.com", "mapquest.com", "yellowpages.com",
+}
+
+NON_BUSINESS_TEXT_HINTS = [
+    "[pdf]", "pdf", "jobs", "job", "employment", "salary", "career", "careers",
+    "university", "department of", "federal", "government", "wikipedia", "curriculum vitae",
+]
+
 
 def _cache_path(prefix: str, key: str) -> str:
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -237,6 +250,31 @@ def is_probably_real_website(link: str, business_name: str = "") -> bool:
     return False
 
 
+def should_skip_non_business_result(title: str, link: str, snippet: str = "") -> bool:
+    title_lower = (title or "").lower()
+    snippet_lower = (snippet or "").lower()
+    link_lower = (link or "").lower()
+
+    parsed = urlparse(link_lower)
+    domain = (parsed.netloc or "").lower().replace("www.", "")
+    path = parsed.path or ""
+
+    if domain.endswith(".gov") or domain.endswith(".edu"):
+        return True
+
+    if any(domain == d or domain.endswith(f".{d}") for d in NON_BUSINESS_DOMAIN_HINTS):
+        return True
+
+    if path.lower().endswith(".pdf"):
+        return True
+
+    text_blob = f"{title_lower} {snippet_lower} {link_lower}"
+    if any(token in text_blob for token in NON_BUSINESS_TEXT_HINTS):
+        return True
+
+    return False
+
+
 # ======================================================
 # MAIN DISCOVERY LOGIC
 # ======================================================
@@ -274,6 +312,11 @@ def discover(service: str, town: str):
             link = item.get("link", "")
             snippet = item.get("snippet", "")
             if not title or not link:
+                continue
+
+            if should_skip_non_business_result(title, link, snippet):
+                if DEBUG:
+                    print(f"[SKIP-NONBIZ] {title} -> {link}")
                 continue
 
             # Skip if we confirm it’s a functioning website
