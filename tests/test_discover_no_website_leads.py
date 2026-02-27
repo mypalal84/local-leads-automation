@@ -62,6 +62,7 @@ def test_is_probably_real_website_non_directory_domain_true(tmp_path, monkeypatc
 def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DISCOVERY_PROVIDER", "serper")
     module = load_discover_module(home)
 
     monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
@@ -109,6 +110,7 @@ def test_discover_writes_filtered_output(tmp_path, monkeypatch):
 def test_discover_removes_stale_output_when_no_leads(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DISCOVERY_PROVIDER", "serper")
     module = load_discover_module(home)
 
     monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
@@ -236,3 +238,63 @@ def test_increment_api_counter_updates_metrics_file(tmp_path, monkeypatch):
 
     payload = __import__("json").loads(metrics_file.read_text(encoding="utf-8"))
     assert payload["serper"] == 1
+
+
+def test_discover_uses_google_places_when_key_present(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-google-key")
+    monkeypatch.delenv("DISCOVERY_PROVIDER", raising=False)
+
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_google_places_text_search", lambda _s, _t: [
+        {
+            "name": "places/abc123",
+            "id": "abc123",
+            "displayName": {"text": "No Site Roofing"},
+            "formattedAddress": "123 Main St, San Jose, CA",
+            "googleMapsUri": "https://maps.google.com/?cid=123",
+        }
+    ])
+    monkeypatch.setattr(module, "get_google_place_details", lambda _pid: {
+        "websiteUri": "",
+        "googleMapsUri": "https://maps.google.com/?cid=123",
+        "formattedAddress": "123 Main St, San Jose, CA",
+    })
+
+    out_path = module.discover("Roofers", "San Jose, CA")
+    assert out_path is not None
+
+    df = pd.read_csv(out_path)
+    assert len(df) == 1
+    assert df.iloc[0]["name"] == "No Site Roofing"
+
+
+def test_discover_google_places_skips_business_with_website(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-google-key")
+    monkeypatch.delenv("DISCOVERY_PROVIDER", raising=False)
+
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_google_places_text_search", lambda _s, _t: [
+        {
+            "name": "places/def456",
+            "id": "def456",
+            "displayName": {"text": "Has Site Roofing"},
+            "formattedAddress": "456 Market St, San Jose, CA",
+            "googleMapsUri": "https://maps.google.com/?cid=456",
+        }
+    ])
+    monkeypatch.setattr(module, "get_google_place_details", lambda _pid: {
+        "websiteUri": "https://hassiteroofing.com",
+        "googleMapsUri": "https://maps.google.com/?cid=456",
+        "formattedAddress": "456 Market St, San Jose, CA",
+    })
+
+    out_path = module.discover("Roofers", "San Jose, CA")
+    assert out_path is None

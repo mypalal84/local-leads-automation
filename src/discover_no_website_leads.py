@@ -26,8 +26,11 @@ from datetime import date, datetime, timedelta
 # ======================================================
 # ENVIRONMENT SETUP
 # ======================================================
-load_dotenv()
+load_dotenv(override=True)
 SERPER = os.getenv("SERPER_API_KEY")
+GOOGLE_PLACES = os.getenv("GOOGLE_PLACES_API_KEY")
+DEFAULT_DISCOVERY_PROVIDER = "google_places" if GOOGLE_PLACES else "serper"
+DISCOVERY_PROVIDER = os.getenv("DISCOVERY_PROVIDER", DEFAULT_DISCOVERY_PROVIDER).strip().lower()
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 BASE_DIR = os.path.expanduser("~/Scripts/Daily_Leads")
@@ -36,6 +39,7 @@ CACHE_DIR = os.path.join(DATA_DIR, "cache")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
+GOOGLE_DISCOVERY_SEARCH_CALLS = int(os.getenv("GOOGLE_DISCOVERY_SEARCH_CALLS", "2"))
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
 # ======================================================
@@ -211,6 +215,95 @@ def run_serper_search(query: str):
     return result
 
 
+def run_google_places_text_search(service: str, town: str):
+    """Query Places API (New) Text Search for businesses in a service + city."""
+    if not GOOGLE_PLACES:
+        print("[WARN] GOOGLE_PLACES_API_KEY missing; cannot use google_places discovery.")
+        return []
+
+    key_fingerprint = hashlib.sha256((GOOGLE_PLACES or "").encode("utf-8")).hexdigest()[:12]
+    cache_key = f"places_new_v1|{key_fingerprint}|{service}|{town}"
+    cached = cache_get("google_places", cache_key)
+    if cached is not None:
+        return cached
+
+    query = f"{service} in {town}"
+
+    def _call_once(next_page_token: str = ""):
+        increment_api_counter("google_places")
+        headers = {
+            "X-Goog-Api-Key": GOOGLE_PLACES,
+            "X-Goog-FieldMask": (
+                "places.id,places.name,places.displayName,places.formattedAddress,"
+                "places.googleMapsUri,places.websiteUri,nextPageToken"
+            ),
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "textQuery": query,
+            "pageSize": 20,
+        }
+        if next_page_token:
+            payload["pageToken"] = next_page_token
+        resp = requests.post(
+            "https://places.googleapis.com/v1/places:searchText",
+            headers=headers,
+            json=payload,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    all_results = []
+    page_token = ""
+    page_count = 0
+
+    page_limit = max(1, GOOGLE_DISCOVERY_SEARCH_CALLS)
+    while page_count < page_limit:
+        payload = retry_request(_call_once, page_token) or {}
+        page_results = payload.get("places", []) or []
+        all_results.extend(page_results)
+        page_token = payload.get("nextPageToken", "") or ""
+        page_count += 1
+        if not page_token:
+            break
+        time.sleep(2)
+
+    cache_set("google_places", cache_key, all_results)
+    return all_results
+
+
+def get_google_place_details(place_id: str):
+    """Get website/maps URL details for a specific place resource or ID (Places API New)."""
+    if not GOOGLE_PLACES or not place_id:
+        return {}
+
+    place_resource = place_id if place_id.startswith("places/") else f"places/{place_id}"
+    key_fingerprint = hashlib.sha256((GOOGLE_PLACES or "").encode("utf-8")).hexdigest()[:12]
+    cache_key = f"places_new_v1_details|{key_fingerprint}|{place_resource}"
+    cached = cache_get("google_place_details", cache_key)
+    if cached is not None:
+        return cached
+
+    def _call():
+        increment_api_counter("google_places")
+        headers = {
+            "X-Goog-Api-Key": GOOGLE_PLACES,
+            "X-Goog-FieldMask": "id,name,displayName,formattedAddress,googleMapsUri,websiteUri",
+        }
+        resp = requests.get(
+            f"https://places.googleapis.com/v1/{place_resource}",
+            headers=headers,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    details = retry_request(_call) or {}
+    cache_set("google_place_details", cache_key, details)
+    return details
+
+
 # ======================================================
 # HELPER: Check if a link likely represents a real business website
 # ======================================================
@@ -302,24 +395,54 @@ def discover(service: str, town: str):
             f"leads_{safe_city}_{safe_service}_NO_WEBSITE_{today}.csv"
         )
 
-        # Construct search query emphasizing “no website” context
-        query = (
-            f'"{service}" "{town}" ("no website" OR "no site" OR "site coming soon" '
-            f'OR "under construction" OR "Google My Business" OR "business.site") '
-            f'-site:facebook.com -site:yelp.com -site:linkedin.com '
-            f'-site:bbb.org -site:angi.com -site:thumbtack.com'
-        )
+        provider = DISCOVERY_PROVIDER
+        if provider == "google_places" and not GOOGLE_PLACES:
+            print("[WARN] DISCOVERY_PROVIDER=google_places but key missing; falling back to serper.")
+            provider = "serper"
 
-        results = run_serper_search(query)
+        if provider == "google_places":
+            results = run_google_places_text_search(service, town)
+        else:
+            query = (
+                f'"{service}" "{town}" ("no website" OR "no site" OR "site coming soon" '
+                f'OR "under construction" OR "Google My Business" OR "business.site") '
+                f'-site:facebook.com -site:yelp.com -site:linkedin.com '
+                f'-site:bbb.org -site:angi.com -site:thumbtack.com'
+            )
+            results = run_serper_search(query)
+
         if not results:
             print(f"[WARN] No discovery results for {town} | {service}")
             return None
 
         leads = []
         for item in results:
-            title = item.get("title", "").strip()
-            link = item.get("link", "")
-            snippet = item.get("snippet", "")
+            if provider == "google_places":
+                display_name = item.get("displayName") or {}
+                title = (display_name.get("text") or item.get("name") or "").strip()
+                place_id = (item.get("name") or item.get("id") or "").strip()
+                details = get_google_place_details(place_id)
+                website = (details.get("websiteUri") or item.get("websiteUri") or "").strip()
+                maps_link = (
+                    details.get("googleMapsUri")
+                    or item.get("googleMapsUri")
+                    or ""
+                ).strip()
+                snippet = (
+                    item.get("formattedAddress")
+                    or details.get("formattedAddress")
+                    or ""
+                ).strip()
+                link = maps_link
+                if website:
+                    if DEBUG:
+                        print(f"[SKIP] Google Places details has website for {title}: {website}")
+                    continue
+            else:
+                title = item.get("title", "").strip()
+                link = item.get("link", "")
+                snippet = item.get("snippet", "")
+
             if not title or not link:
                 continue
 
@@ -328,11 +451,11 @@ def discover(service: str, town: str):
                     print(f"[SKIP-NONBIZ] {title} -> {link}")
                 continue
 
-            # Skip if we confirm it’s a functioning website
-            if is_probably_real_website(link, title):
-                if DEBUG:
-                    print(f"[SKIP] Likely real site: {link}")
-                continue
+            if provider != "google_places":
+                if is_probably_real_website(link, title):
+                    if DEBUG:
+                        print(f"[SKIP] Likely real site: {link}")
+                    continue
 
             # Skip if snippet already contains a full domain (self‑referential)
             if re.search(r"www\.[a-z0-9\-]+\.(com|net|org|biz)", snippet, re.I):

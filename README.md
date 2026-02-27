@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.x-blue)
 ![Automation](https://img.shields.io/badge/Automation-Daily-green)
 ![Email](https://img.shields.io/badge/Email-Gmail-orange)
-![APIs](https://img.shields.io/badge/APIs-Serper%20%7C%20Hunter-purple)
+![APIs](https://img.shields.io/badge/APIs-Google%20Places%20%7C%20Serper%20%7C%20Hunter-purple)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 
 ## 🧭 Overview
@@ -12,7 +12,7 @@ ZBA Digital’s Daily Leads Pipeline automatically finds local small-business ow
 
 ## 🧱 End-to-End Flow
 
-- 🔍 Discover new local business leads (via Serper API)
+- 🔍 Discover new local business leads (Google Places API (New) by default; Serper fallback)
 - ✉️ Verify emails (Hunter.io), bounded by remaining daily quota
 - 🤖 Send personalized cold emails with rotating subject lines
 - 🛑 Enforce daily send limits and suppression list checks
@@ -40,12 +40,13 @@ Daily_Leads/
 │   ├── sent_log.csv             # Prevent re‑sending to same address
 │   ├── replies.csv              # Stores detected replies
 │   ├── suppressions.csv         # Never-send list (manual + auto-suppressed)
-│   ├── cache/                   # Cached Serper/Hunter responses (TTL-pruned)
+│   ├── cache/                   # Cached Google Places/Serper/Hunter responses (TTL-pruned)
+│   ├── pending_leads.csv        # Deferred leads queue (pending-first next run)
 │   └── archive/                 # Archived lead CSV snapshots
 │
 ├── src/
 │   ├── master_daily_pipeline.sh # 🚀 Main orchestrator (cron entry point)
-│   ├── discover_no_website_leads.py # Lead discovery (Serper)
+│   ├── discover_no_website_leads.py # Lead discovery (Google Places New + Serper fallback)
 │   ├── find_no_website_emails.py# Lead enrichment (Serper + Hunter)
 │   ├── send_cold_emails.py      # Outreach + reply handling
 │   └── daily_summary_report.py  # Optional standalone summary mailer
@@ -81,14 +82,25 @@ MAX_PAIRS_PER_RUN=15
 LEAD_SCORE_THRESHOLD=2
 PRE_ENRICH_SCORE_FILTER=true
 CACHE_TTL_DAYS=7
+GOOGLE_DISCOVERY_SEARCH_CALLS=4
+
+# Discovery provider (defaults to google_places when GOOGLE_PLACES_API_KEY exists)
+# DISCOVERY_PROVIDER=google_places
+
+# Sender queue/reply behavior
+BLOCK_GENERIC_INBOXES=false
+SKIP_REPLY_CHECK_CLEANUP=false
 
 # Optional footer appended to cold emails
 UNSUBSCRIBE_FOOTER="If you'd prefer not to hear from me again, reply STOP and I will remove you immediately."
 
 # API connections
+GOOGLE_PLACES_API_KEY=your_google_places_key
 SERPER_API_KEY=your_serper_key
 HUNTER_API_KEY=your_hunter_key
 ```
+
+Google discovery is now configured to use Places API (New) when `GOOGLE_PLACES_API_KEY` is present. `DISCOVERY_PROVIDER` can still be forced to `serper` if needed.
 
 🧠 Tip: If you use 2-Factor Auth with Gmail, generate an App Password here: https://myaccount.google.com/apppasswords
 
@@ -191,6 +203,10 @@ Current opener behavior:
 - 🛑 Suppression list enforcement (`data/suppressions.csv`)
 - 📬 Unsubscribe footer support via `UNSUBSCRIBE_FOOTER`
 - 🔁 Reply tracking and notifications
+- 🗺 Google Places API (New) discovery path with Serper fallback
+- 📄 Discovery call budget control via `GOOGLE_DISCOVERY_SEARCH_CALLS`
+- 🧾 Pending queue persistence in `data/pending_leads.csv` (deferred leads only, consumed first next run)
+- 🧹 Optional post-send cleanup skip via `SKIP_REPLY_CHECK_CLEANUP=true`
 - 📈 Daily KPI snapshots written to `logs/daily_kpi.csv`
 - 🔢 Run-level API call totals (Google Places / Serper / Hunter) included in summary email
 
@@ -223,9 +239,9 @@ Total replied addresses: 2
 
 | Script | Description |
 | --- | --- |
-| `discover_no_website_leads.py` | 🔎 Finds likely no-website leads and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
+| `discover_no_website_leads.py` | 🔎 Finds likely no-website leads via Google Places API (New) by default (Serper fallback) and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
 | `find_no_website_emails.py` | 🔍 Enriches discovery output, re-checks live websites, and verifies contact emails via Serper and Hunter APIs. |
-| `send_cold_emails.py` | ✉️ Sends cold emails using dynamic fields, rotating subject lines, and reply processing (auto-cleanup + notifications). |
+| `send_cold_emails.py` | ✉️ Sends cold emails with pending-first queue processing, deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
 | `daily_summary_report.py` | 📊 Generates a daily overview of lead counts and campaign performance. |
 
 ## 🗃 Data Outputs 📑
@@ -237,10 +253,27 @@ Total replied addresses: 2
 | `data/sent_log.csv` | Rolling record of all recipients already emailed |
 | `data/replies.csv` | Archived reply summaries (sender, subject, snippet, date) |
 | `data/suppressions.csv` | Suppressed addresses (manual and auto from negative replies) |
-| `data/cache/` | Cached API responses used to reduce repeat Serper/Hunter calls |
+| `data/pending_leads.csv` | Deferred leads to retry next run (always present; only deferred/retryable rows retained) |
+| `data/cache/` | Cached API responses used to reduce repeat Google Places/Serper/Hunter calls |
 | `logs/daily_kpi.csv` | Run-by-run KPIs: pairs, sent, replies, quota remaining |
 | `logs/run_metrics_<timestamp>.json` | Per-run API counters used in summary email |
 | `logs/` | Process and cron output logs |
+
+## 🗺 Discovery Provider Behavior
+
+- Default provider is `google_places` when `GOOGLE_PLACES_API_KEY` is set; otherwise it falls back to `serper`.
+- You can explicitly set `DISCOVERY_PROVIDER=serper` or `DISCOVERY_PROVIDER=google_places`.
+- Google Places discovery uses Places API (New) Text Search + place details and skips businesses with a discovered `websiteUri`.
+- `GOOGLE_DISCOVERY_SEARCH_CALLS` controls how many paginated Places Text Search calls are made per city/service pair.
+- Discovery cache keys include versioning and API-key fingerprinting to avoid stale cross-key false hits.
+
+## 🧾 Pending Leads Queue
+
+- `send_cold_emails.py` reads `data/pending_leads.csv` first, then current-day file rows.
+- Rows are deduped by recipient email before send decisions.
+- Deferred/retryable rows (for example, domain-cap overflow or transient send errors) are carried forward to `pending_leads.csv`.
+- Non-retryable policy skips are pruned and not re-queued.
+- Queue file is always written each run (header-only when empty).
 
 ## ✅ Testing
 

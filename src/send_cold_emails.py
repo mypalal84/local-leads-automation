@@ -38,6 +38,7 @@ DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 SENT_LOG = os.path.join(DATA_DIR, "sent_log.csv")
 REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
 SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
+PENDING_LEADS_FILE = os.getenv("PENDING_LEADS_FILE", "")
 PROCESSED_REPLY_IDS_FILE = os.path.join(DATA_DIR, "processed_reply_message_ids.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
 DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
@@ -45,7 +46,9 @@ LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
 PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
 BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
+ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "true").strip().lower() in {"1", "true", "yes", "on"}
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
+SKIP_REPLY_CHECK_CLEANUP = os.getenv("SKIP_REPLY_CHECK_CLEANUP", "false").strip().lower() in {"1", "true", "yes", "on"}
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If this isn't relevant, reply STOP and I'll remove you from future emails.",
@@ -97,8 +100,12 @@ EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 GENERIC_LOCAL_PARTS = {
     "info", "admin", "support", "sales", "contact", "office", "hello", "team", "service", "customerservice"
 }
+MISMATCH_IGNORED_SOURCE_DOMAINS = {
+    "google.com", "maps.google.com", "business.site",
+}
 LIKELY_FIRST_NAMES = {
-    "aaron", "adam", "alex", "alexander", "alexis", "alice", "amanda", "amy", "andrew", "andy",
+    "aaron", "adam", "alex", "alexander", "alexis", "alice", "amanda", "amber", "amy", "andrew", "andy",
+    "bryan", "colin",
     "anna", "anthony", "ashley", "austin", "ben", "brandon", "brian", "brittany", "cameron", "carol",
     "charles", "chris", "christina", "dan", "daniel", "david", "derek", "diana", "emily", "emma",
     "eric", "ethan", "evan", "frank", "gabriel", "grace", "hannah", "heather", "ian", "jack",
@@ -171,6 +178,59 @@ def append_to_daily_log(email):
     with open(DAILY_SENT_LOG, "a", newline="") as f:
         csv.writer(f).writerow([email.lower()])
 
+
+def load_pending_rows():
+    pending_file = PENDING_LEADS_FILE or os.path.join(DATA_DIR, "pending_leads.csv")
+    if not os.path.exists(pending_file):
+        return []
+    rows = []
+    with open(pending_file, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if not row:
+                continue
+            email_val = (row.get("emails", "") or "").split(",")[0].strip().lower()
+            if not email_val:
+                continue
+            rows.append(row)
+    return rows
+
+
+def save_pending_rows(rows):
+    pending_file = PENDING_LEADS_FILE or os.path.join(DATA_DIR, "pending_leads.csv")
+    rows = rows or []
+    if not rows:
+        default_fields = [
+            "name", "emails", "notes", "website", "link",
+            "__source_file", "__town", "__service", "__queued_at",
+        ]
+        with open(pending_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=default_fields)
+            writer.writeheader()
+        return
+
+    merged_fieldnames = []
+    for row in rows:
+        for key in row.keys():
+            if key not in merged_fieldnames:
+                merged_fieldnames.append(key)
+
+    with open(pending_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=merged_fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in merged_fieldnames})
+
+
+def build_pending_row(row, source_file="", town="", service=""):
+    pending_row = dict(row or {})
+    pending_row["__source_file"] = source_file or pending_row.get("__source_file", "")
+    pending_row["__town"] = town or pending_row.get("__town", "")
+    pending_row["__service"] = service or pending_row.get("__service", "")
+    pending_row.pop("__skip_reason", None)
+    pending_row["__queued_at"] = datetime.now().isoformat(timespec="seconds")
+    return pending_row
+
 def load_suppression_list():
     if not os.path.exists(SUPPRESSIONS_FILE):
         return set()
@@ -230,6 +290,46 @@ def is_generic_inbox(email_addr):
         return False
     local_part = email_addr.split("@")[0]
     return local_part in GENERIC_LOCAL_PARTS
+
+
+def should_allow_generic_business_inbox(row, email_addr):
+    if not ALLOW_INFO_INBOX_WHEN_BUSINESS:
+        return False
+
+    email_addr = (email_addr or "").strip().lower()
+    if "@" not in email_addr:
+        return False
+
+    local_part, domain = email_addr.split("@", 1)
+    if local_part != "info":
+        return False
+    if not domain or domain in FREE_EMAIL_DOMAINS:
+        return False
+    if domain.endswith(".gov") or domain.endswith(".edu"):
+        return False
+    if domain in NON_BUSINESS_RECIPIENT_DOMAINS:
+        return False
+
+    business_name = normalize_text_value(row.get("name", "")).lower()
+    if not business_name:
+        return False
+    root = domain.split(".")[0]
+    root_clean = re.sub(r"[^a-z0-9]", "", root)
+    name_clean = re.sub(r"[^a-z0-9]", "", business_name)
+    if not root_clean or not name_clean:
+        return False
+    if root_clean not in name_clean and name_clean not in root_clean:
+        return False
+
+    skip_non_biz, _ = should_skip_non_business_lead(row, email_addr)
+    if skip_non_biz:
+        return False
+
+    mismatch_skip, _ = should_skip_domain_mismatch(row, email_addr)
+    if mismatch_skip:
+        return False
+
+    return True
 
 
 def extract_contact_name(email_addr):
@@ -503,6 +603,12 @@ def should_skip_domain_mismatch(row, email_field):
     if not business_domain:
         return False, "ok"
 
+    if (
+        any(business_domain == d or business_domain.endswith(f".{d}") for d in NON_BUSINESS_SOURCE_DOMAINS)
+        or any(business_domain == d or business_domain.endswith(f".{d}") for d in MISMATCH_IGNORED_SOURCE_DOMAINS)
+    ):
+        return False, "ok"
+
     if recipient_domain == business_domain or recipient_domain.endswith(f".{business_domain}"):
         return False, "ok"
 
@@ -539,6 +645,27 @@ def infer_service_from_row(row, fallback_service=""):
             return label
 
     return fallback_service
+
+
+def resolve_row_context(row, fallback_town, fallback_service):
+    row_town = normalize_text_value(row.get("__town", ""))
+    row_service = normalize_text_value(row.get("__service", ""))
+    if row_town and row_service:
+        return row_town, row_service
+
+    source_file = normalize_text_value(row.get("__source_file", ""))
+    if source_file:
+        source_town, source_service = parse_context_from_filename(source_file)
+        if not row_town and source_town and source_town != "Your Town":
+            row_town = source_town
+        if not row_service and source_service and source_service != "Your Service":
+            row_service = source_service
+
+    if not row_town:
+        row_town = fallback_town
+    if not row_service:
+        row_service = fallback_service
+    return row_town, row_service
 
 
 def build_personalized_opener(notes, service, business=""):
@@ -673,6 +800,7 @@ def build_email_body(business, town, service, contact_name="there", notes=""):
 def send_cold_emails(csv_file=None):
     sent = load_sent_log()
     suppressed = load_suppression_list()
+    pending_rows = load_pending_rows()
     already_sent_today = load_daily_sent_count()
     domain_send_counts = load_daily_domain_counts()
     remaining_quota = max(DAILY_EMAIL_TARGET - already_sent_today, 0)
@@ -699,95 +827,131 @@ def send_cold_emails(csv_file=None):
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
     print(f"[INFO] Lead score threshold: {LEAD_SCORE_THRESHOLD}")
     print(f"[INFO] Domain cap: {MAX_EMAILS_PER_DOMAIN} | Block generic inboxes: {BLOCK_GENERIC_INBOXES}")
+    if pending_rows:
+        print(f"[INFO] Pending queue available: {len(pending_rows)} leads")
     if DRY_RUN:
         print("[INFO] Sender DRY_RUN enabled: previewing emails without SMTP send.")
 
+    current_rows = []
+    with open(csv_file, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if not row:
+                continue
+            current_row = dict(row)
+            current_row["__source_file"] = csv_file
+            current_row["__town"] = town
+            current_row["__service"] = service
+            current_rows.append(current_row)
+
+    combined_rows = []
+    seen_emails = set()
+    for row in pending_rows + current_rows:
+        email_field = (row.get("emails", "") or "").split(",")[0].strip().lower()
+        if not email_field:
+            continue
+        if email_field in seen_emails:
+            continue
+        seen_emails.add(email_field)
+        combined_rows.append(row)
+
+    carryover_rows = []
+
     def process_rows(server=None):
         nonlocal remaining_quota
-        with open(csv_file, newline="", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                email_field = row.get("emails","").split(",")[0].strip().lower()
-                if not email_field or email_field in sent or email_field in suppressed:
-                    if email_field in suppressed:
-                        print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
-                    continue
+        for row in combined_rows:
+            email_field = (row.get("emails", "") or "").split(",")[0].strip().lower()
+            row_town, row_service_ctx = resolve_row_context(row, town, service)
+            if not email_field or email_field in sent or email_field in suppressed:
+                if email_field in suppressed:
+                    print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
+                continue
 
-                website_val = row.get("website", "")
-                existing_website = "" if pd.isna(website_val) else str(website_val).strip()
-                if existing_website:
-                    print(f"[WEBSITE] Skipping {email_field} (existing website: {existing_website})")
-                    continue
+            website_val = row.get("website", "")
+            existing_website = "" if pd.isna(website_val) else str(website_val).strip()
+            if existing_website:
+                print(f"[WEBSITE] Skipping {email_field} (existing website: {existing_website})")
+                continue
 
-                if BLOCK_GENERIC_INBOXES and is_generic_inbox(email_field):
+            if BLOCK_GENERIC_INBOXES and is_generic_inbox(email_field):
+                if should_allow_generic_business_inbox(row, email_field):
+                    print(f"[GENERIC-ALLOW] Allowing business info inbox: {email_field}")
+                else:
                     print(f"[GENERIC] Skipping generic inbox: {email_field}")
                     continue
 
-                if PRE_SEND_VALIDATE_EMAILS:
-                    valid, reason = should_send_to_email(email_field)
-                    if not valid:
-                        print(f"[VALIDATION] Skipping {email_field} ({reason})")
-                        continue
-
-                domain = email_field.split("@")[-1]
-                if MAX_EMAILS_PER_DOMAIN > 0 and domain_send_counts.get(domain, 0) >= MAX_EMAILS_PER_DOMAIN:
-                    print(f"[DOMAIN-CAP] Skipping {email_field} (domain {domain} cap reached)")
+            if PRE_SEND_VALIDATE_EMAILS:
+                valid, reason = should_send_to_email(email_field)
+                if not valid:
+                    print(f"[VALIDATION] Skipping {email_field} ({reason})")
                     continue
 
-                should_skip, reason = should_skip_non_business_lead(row, email_field)
-                if should_skip:
-                    print(f"[QUALITY] Skipping {email_field} ({reason})")
-                    continue
+            domain = email_field.split("@")[-1]
+            if MAX_EMAILS_PER_DOMAIN > 0 and domain_send_counts.get(domain, 0) >= MAX_EMAILS_PER_DOMAIN:
+                print(f"[DOMAIN-CAP] Deferring {email_field} (domain {domain} cap reached)")
+                if not DRY_RUN:
+                    carryover_rows.append(build_pending_row(row, source_file=csv_file, town=row_town, service=row_service_ctx))
+                continue
 
-                mismatch_skip, mismatch_reason = should_skip_domain_mismatch(row, email_field)
-                if mismatch_skip:
-                    print(f"[QUALITY] Skipping {email_field} ({mismatch_reason})")
-                    continue
+            should_skip, reason = should_skip_non_business_lead(row, email_field)
+            if should_skip:
+                print(f"[QUALITY] Skipping {email_field} ({reason})")
+                continue
 
-                lead_score = score_lead(row, email_field)
-                if lead_score < LEAD_SCORE_THRESHOLD:
-                    print(f"[SCORE] Skipping {email_field} (score={lead_score}, threshold={LEAD_SCORE_THRESHOLD})")
-                    continue
+            mismatch_skip, mismatch_reason = should_skip_domain_mismatch(row, email_field)
+            if mismatch_skip:
+                print(f"[QUALITY] Skipping {email_field} ({mismatch_reason})")
+                continue
 
-                business = clean_business_name(row.get("name", ""), recipient_email=email_field)
-                contact_name = extract_contact_name(email_field)
-                subject = build_subject_line(business=business, contact_name=contact_name, town=town)
-                lead_service = infer_service_from_row(row, service)
-                body = build_email_body(
-                    business=business,
-                    town=town,
-                    service=lead_service,
-                    contact_name=contact_name,
-                    notes=row.get("notes", ""),
-                )
+            lead_score = score_lead(row, email_field)
+            if lead_score < LEAD_SCORE_THRESHOLD:
+                print(f"[SCORE] Skipping {email_field} (score={lead_score}, threshold={LEAD_SCORE_THRESHOLD})")
+                continue
 
-                msg = MIMEText(body, "plain", "utf-8")
-                msg["Subject"], msg["From"], msg["To"] = subject, EMAIL_ADDR, email_field
+            if not DRY_RUN and remaining_quota <= 0:
+                carryover_rows.append(build_pending_row(row, source_file=csv_file, town=row_town, service=row_service_ctx))
+                continue
 
-                if DRY_RUN:
-                    body_preview = "\n".join(body.splitlines()[:8])
-                    print(f"[DRY-SEND] {business} → {email_field} | {subject}")
-                    print(f"[DRY-BODY]\n{body_preview}\n---")
-                    domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
-                    remaining_quota -= 1
-                    if remaining_quota <= 0:
-                        print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
-                        break
-                    continue
+            business = clean_business_name(row.get("name", ""), recipient_email=email_field)
+            contact_name = extract_contact_name(email_field)
+            subject = build_subject_line(business=business, contact_name=contact_name, town=row_town)
+            lead_service = infer_service_from_row(row, row_service_ctx)
+            body = build_email_body(
+                business=business,
+                town=row_town,
+                service=lead_service,
+                contact_name=contact_name,
+                notes=row.get("notes", ""),
+            )
 
-                try:
-                    server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
-                    append_to_log(email_field)
-                    append_to_daily_log(email_field)
-                    domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
-                    remaining_quota -= 1
-                    print(f"[SENT] {business} → {email_field} | {subject}")
-                    if remaining_quota <= 0:
-                        print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
-                        break
-                    time.sleep(random.uniform(1,5))
-                except Exception as e:
-                    print(f"[ERR] {email_field}: {e}")
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"], msg["From"], msg["To"] = subject, EMAIL_ADDR, email_field
+
+            if DRY_RUN:
+                body_preview = "\n".join(body.splitlines()[:8])
+                print(f"[DRY-SEND] {business} → {email_field} | {subject}")
+                print(f"[DRY-BODY]\n{body_preview}\n---")
+                domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
+                remaining_quota -= 1
+                if remaining_quota <= 0:
+                    print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
+                    break
+                continue
+
+            try:
+                server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
+                append_to_log(email_field)
+                append_to_daily_log(email_field)
+                sent.add(email_field)
+                domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
+                remaining_quota -= 1
+                print(f"[SENT] {business} → {email_field} | {subject}")
+                if remaining_quota <= 0:
+                    print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
+                time.sleep(random.uniform(1,5))
+            except Exception as e:
+                print(f"[ERR] {email_field}: {e}")
+                carryover_rows.append(build_pending_row(row, source_file=csv_file, town=row_town, service=row_service_ctx))
 
     if DRY_RUN:
         process_rows(server=None)
@@ -796,9 +960,24 @@ def send_cold_emails(csv_file=None):
             server.login(EMAIL_ADDR, EMAIL_PASS)
             process_rows(server=server)
 
+    if not DRY_RUN:
+        deduped_pending = []
+        seen_pending_emails = set()
+        for row in carryover_rows:
+            email_field = (row.get("emails", "") or "").split(",")[0].strip().lower()
+            if not email_field or email_field in seen_pending_emails:
+                continue
+            seen_pending_emails.add(email_field)
+            deduped_pending.append(row)
+        save_pending_rows(deduped_pending)
+        print(f"[PENDING] Saved {len(deduped_pending)} lead(s) for future runs.")
+
     print("[INFO] Outbound cold-email batch finished.\n")
     if DRY_RUN:
         print("[INFO] Sender DRY_RUN: skipping reply-check cleanup.")
+        return
+    if SKIP_REPLY_CHECK_CLEANUP:
+        print("[INFO] SKIP_REPLY_CHECK_CLEANUP enabled: skipping reply-check cleanup.")
         return
 
     replied = fetch_replies()  # cleanup

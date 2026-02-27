@@ -134,6 +134,109 @@ def test_append_to_suppressions_is_idempotent(tmp_path, monkeypatch):
     assert rows[0][0] == "same@example.com"
 
 
+def test_pending_queue_reuses_qualified_unsent_leads(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes"])
+        writer.writeheader()
+        writer.writerow({"name": "First Biz", "emails": "first@examplebiz.com", "website": "", "notes": ""})
+        writer.writerow({"name": "Second Biz", "emails": "second@examplebiz.com", "website": "", "notes": ""})
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "PENDING_LEADS_FILE", str(data_dir / "pending_leads.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", False)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce, "fetch_replies", lambda: set())
+    monkeypatch.setattr(sce.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sce.random, "uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(sce, "DRY_RUN", False)
+
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 1)
+    smtp_first = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp_first)
+    sce.send_cold_emails(csv_file=str(csv_path))
+
+    assert len(smtp_first.sent) == 1
+    with open(sce.PENDING_LEADS_FILE, newline="", encoding="utf-8") as f:
+        pending_rows = list(csv.DictReader(f))
+    assert len(pending_rows) == 1
+    assert pending_rows[0]["emails"] == "second@examplebiz.com"
+
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-27.csv"))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 5)
+    smtp_second = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp_second)
+    sce.send_cold_emails(csv_file=str(csv_path))
+
+    assert ("second@examplebiz.com",) in smtp_second.sent
+    pending_path = pathlib.Path(sce.PENDING_LEADS_FILE)
+    assert pending_path.exists()
+    with open(pending_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert rows == []
+
+
+def test_resolve_row_context_uses_source_file_when_row_context_missing():
+    row = {
+        "emails": "amber@auroraplumbing.com",
+        "__source_file": "data/leads_Seattle_WA_Plumbers_NO_WEBSITE_2026-02-27.csv",
+        "__town": "",
+        "__service": "",
+    }
+
+    town, service = sce.resolve_row_context(row, "Sacramento Ca", "Landscapers Lawn Care")
+
+    assert town == "Seattle Wa"
+    assert service == "Plumbers"
+
+
+def test_policy_skipped_lead_is_pruned_from_pending_queue(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes"])
+        writer.writeheader()
+        writer.writerow({"name": "Acme Biz", "emails": "hello@acmebiz.com", "website": "", "notes": ""})
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "PENDING_LEADS_FILE", str(data_dir / "pending_leads.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", True)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce, "fetch_replies", lambda: set())
+    monkeypatch.setattr(sce.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sce.random, "uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(sce, "DRY_RUN", False)
+
+    smtp = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp)
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+
+    assert smtp.sent == []
+    with open(sce.PENDING_LEADS_FILE, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert rows == []
+
+
 def test_score_lead_prefers_business_domains():
     row = {"name": "Acme Plumbing", "notes": "", "website": ""}
     assert sce.score_lead(row, "owner@acmeplumbing.com") >= 3
@@ -158,6 +261,9 @@ def test_build_email_body_includes_unsubscribe_footer(monkeypatch):
 @pytest.mark.parametrize(
     "email_addr, expected_name",
     [
+        ("amber@auroraplumbing.com", "Amber"),
+        ("bryan@aqualityhvac.org", "Bryan"),
+        ("colin@advancedheatingandcooling.com", "Colin"),
         ("andy.maclean@owenscorning.com", "Andy"),
         ("morgan@jazzhouse.org", "Morgan"),
         ("veronica.hart@zoominfo.com", "Veronica"),
@@ -490,6 +596,59 @@ def test_sender_skips_rows_with_existing_website(tmp_path, monkeypatch, capsys):
     assert smtp.sent == []
 
 
+def test_skip_reply_check_cleanup_in_live_mode(tmp_path, monkeypatch, capsys):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Roofers_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "notes", "website", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Bay View Roofing, Inc.",
+                "emails": "owner@bayviewroofinginc.com",
+                "notes": "Trusted roofer serving local homeowners since 2008.",
+                "website": "",
+                "link": "https://www.bayviewroofinginc.com",
+            }
+        )
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", False)
+    monkeypatch.setattr(sce, "DRY_RUN", False)
+    monkeypatch.setattr(sce, "SKIP_REPLY_CHECK_CLEANUP", True)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sce.random, "uniform", lambda *_args, **_kwargs: 0)
+
+    called = {"fetch": 0}
+
+    def fake_fetch_replies():
+        called["fetch"] += 1
+        return {"owner@bayviewroofinginc.com"}
+
+    monkeypatch.setattr(sce, "fetch_replies", fake_fetch_replies)
+
+    smtp = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp)
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+    out = capsys.readouterr().out
+
+    assert ("owner@bayviewroofinginc.com",) in smtp.sent
+    assert "SKIP_REPLY_CHECK_CLEANUP enabled" in out
+    assert called["fetch"] == 0
+
+
 def test_is_auto_reply_detects_subject_token():
     msg = EmailMessage()
     assert sce.is_auto_reply(msg, "Automatic reply: Out of office") is True
@@ -639,3 +798,57 @@ def test_should_skip_domain_mismatch_allows_matching_domain():
     skip, reason = sce.should_skip_domain_mismatch(row, "owner@bayviewroofinginc.com")
     assert skip is False
     assert reason == "ok"
+
+
+def test_should_skip_domain_mismatch_ignores_google_maps_link_domain():
+    row = {
+        "name": "San Jose Roofing Co",
+        "website": "",
+        "link": "https://maps.google.com/?cid=9168630403281043056",
+        "notes": "",
+    }
+    skip, reason = sce.should_skip_domain_mismatch(row, "info@sanjoseroofingco.com")
+    assert skip is False
+    assert reason == "ok"
+
+
+def test_block_generic_inboxes_allows_business_info_when_enabled(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "link", "website", "notes"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "San Jose Roofing Co",
+                "emails": "info@sanjoseroofingco.com",
+                "link": "https://maps.google.com/?cid=9168630403281043056",
+                "website": "",
+                "notes": "2443 Alvin Ave, San Jose, CA 95121, USA",
+            }
+        )
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", True)
+    monkeypatch.setattr(sce, "ALLOW_INFO_INBOX_WHEN_BUSINESS", True)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce, "fetch_replies", lambda: set())
+    monkeypatch.setattr(sce.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sce.random, "uniform", lambda *_args, **_kwargs: 0)
+
+    smtp = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp)
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+
+    assert ("info@sanjoseroofingco.com",) in smtp.sent
