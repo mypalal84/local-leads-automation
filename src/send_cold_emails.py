@@ -62,13 +62,13 @@ NON_BUSINESS_RECIPIENT_DOMAINS = {
     "indeed.com", "linkedin.com", "wikipedia.org", "va.gov", "usa.gov",
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
     "zoominfo.com", "manta.com", "mapquest.com", "yellowpages.com",
-    "consumeraffairs.com",
+    "consumeraffairs.com", "houzz.com",
 }
 NON_BUSINESS_SOURCE_DOMAINS = {
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
     "zoominfo.com", "manta.com", "wikipedia.org", "wikimedia.org", "fandom.com",
     "indeed.com", "linkedin.com", "yellowpages.com", "mapquest.com", "zocdoc.com",
-    "consumeraffairs.com",
+    "consumeraffairs.com", "houzz.com",
 }
 NON_BUSINESS_TEXT_HINTS = [
     "[pdf]", "pdf", "jobs", "job", "employment", "salary", "career", "careers",
@@ -711,6 +711,12 @@ def send_cold_emails(csv_file=None):
                 if not email_field or email_field in sent or email_field in suppressed:
                     if email_field in suppressed:
                         print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
+                    continue
+
+                website_val = row.get("website", "")
+                existing_website = "" if pd.isna(website_val) else str(website_val).strip()
+                if existing_website:
+                    print(f"[WEBSITE] Skipping {email_field} (existing website: {existing_website})")
                     continue
 
                 if BLOCK_GENERIC_INBOXES and is_generic_inbox(email_field):

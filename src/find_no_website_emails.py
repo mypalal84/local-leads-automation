@@ -43,6 +43,7 @@ FREE_EMAIL_DOMAINS = {
 
 DIRECTORY_DOMAIN_HINTS = {
     "yelp.com",
+    "houzz.com",
     "zocdoc.com",
     "pinterest.com",
     "medium.com",
@@ -292,9 +293,8 @@ def enrich(service, town, max_leads=None):
 
             if existing_website:
                 skipped_site += 1
-                if DEBUG:
-                    name = str(row.get("name", "")).strip() or "(unknown)"
-                    print(f"[SKIP-ROW] Existing website present for {name}: {existing_website}")
+                name = str(row.get("name", "")).strip() or "(unknown)"
+                print(f"[SKIP-API] Existing website present for {name}: {existing_website}")
                 continue
 
             if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):

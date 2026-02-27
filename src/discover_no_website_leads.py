@@ -79,7 +79,7 @@ NON_BUSINESS_DOMAIN_HINTS = {
     "stanford.edu", "mit.edu", "nih.gov", "va.gov", "usa.gov", "cdc.gov", "loc.gov",
     "zocdoc.com", "healthgrades.com", "webmd.com", "mapquest.com", "yellowpages.com",
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com", "manta.com",
-    "zoominfo.com", "fandom.com", "wikimedia.org", "elevatorwiki.com",
+    "zoominfo.com", "fandom.com", "wikimedia.org", "elevatorwiki.com", "houzz.com",
 }
 
 NON_BUSINESS_TEXT_HINTS = [
