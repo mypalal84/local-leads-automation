@@ -212,8 +212,19 @@ def test_build_personalized_opener_falls_back_for_caption_like_notes():
     opener = sce.build_personalized_opener(
         "Roofing installation above coastal homes with ocean view and clear sky",
         "Roofers",
+        business="Bay View Roofing",
     )
-    assert "quick website idea" in opener
+    assert opener.startswith("I had a quick idea for helping Bay View Roofing")
+
+
+def test_build_personalized_opener_avoids_low_signal_directory_notes():
+    opener = sce.build_personalized_opener(
+        "business directory",
+        "Roofers",
+        business="Acme Roofing",
+    )
+    assert "Noticed" not in opener
+    assert "Acme Roofing" in opener
 
 
 def test_build_email_body_uses_clearer_default_unsubscribe_copy(monkeypatch):
@@ -237,6 +248,20 @@ def test_clean_business_name_splits_common_glued_suffixes():
 
 def test_clean_business_name_falls_back_to_recipient_domain_when_missing():
     assert sce.clean_business_name("", recipient_email="jrace@allenthomasgroup.com") == "Allen Thomas Group"
+
+
+@pytest.mark.parametrize(
+    "email_addr, expected",
+    [
+        ("veronica.hart@zoominfo.com", "ZoomInfo"),
+        ("publicrelations@homeadvisor.com", "HomeAdvisor"),
+        ("acurls@consumeraffairs.com", "ConsumerAffairs"),
+        ("andy.maclean@owenscorning.com", "Owens Corning"),
+        ("help@bbb.org", "BBB"),
+    ],
+)
+def test_clean_business_name_brand_casing_from_domain(email_addr, expected):
+    assert sce.clean_business_name("", recipient_email=email_addr) == expected
 
 
 def test_build_service_cta_line_points_to_website():

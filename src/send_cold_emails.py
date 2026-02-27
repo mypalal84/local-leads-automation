@@ -514,7 +514,7 @@ def infer_service_from_row(row, fallback_service=""):
     return fallback_service
 
 
-def build_personalized_opener(notes, service):
+def build_personalized_opener(notes, service, business=""):
     notes_text = normalize_text_value(notes)
     if notes_text:
         compact = re.sub(r"\s+", " ", notes_text).strip()
@@ -525,20 +525,25 @@ def build_personalized_opener(notes, service):
             low_signal_tokens = [
                 "image", "photo", "logo", "banner", "above", "with ocean view",
                 "stock", "vector", "wallpaper", "freepik", "shutterstock",
+                "directory", "reviews", "marketplace", "products", "services", "venue",
             ]
             high_signal_tokens = [
                 "serving", "specializ", "family", "licensed", "insured", "years",
                 "since", "locally", "owned", "residential", "commercial", "reviews",
             ]
-            if any(token in sentence_lower for token in low_signal_tokens) and not any(
-                token in sentence_lower for token in high_signal_tokens
-            ):
+            has_high_signal = any(token in sentence_lower for token in high_signal_tokens)
+            has_low_signal = any(token in sentence_lower for token in low_signal_tokens)
+            if has_low_signal or not has_high_signal:
                 first_sentence = ""
 
         if len(first_sentence) >= 16:
             if len(first_sentence) > 100:
                 first_sentence = first_sentence[:100].rstrip() + "…"
             return f"Noticed {first_sentence[0].lower() + first_sentence[1:]}."
+
+    business_text = clean_business_name(business)
+    if business_text and business_text != "your company":
+        return f"I had a quick idea for helping {business_text} turn more local searches into qualified inquiries."
 
     service_text = normalize_text_value(service).replace("/", " and ")
     service_text = re.sub(r"\s+", " ", service_text).strip().lower()
@@ -572,6 +577,12 @@ def infer_business_name_from_email(email_addr):
         "jazzhouse": "Jazz House",
         "sturmelevator": "Sturm Elevator",
         "mccowngordon": "McCown Gordon",
+        "zoominfo": "ZoomInfo",
+        "homeadvisor": "HomeAdvisor",
+        "consumeraffairs": "ConsumerAffairs",
+        "owenscorning": "Owens Corning",
+        "yelp": "Yelp",
+        "bbb": "BBB",
     }
     if core in explicit_map:
         return explicit_map[core]
@@ -622,7 +633,7 @@ def build_email_body(business, town, service, contact_name="there", notes=""):
         town=format_town_for_copy(town),
         service=service,
         contact_name=(contact_name or "there"),
-        opener_line=build_personalized_opener(notes, service),
+        opener_line=build_personalized_opener(notes, service, business=business),
         cta_line=build_service_cta_line(service),
     )
     if UNSUBSCRIBE_FOOTER:
