@@ -312,3 +312,37 @@ def test_should_skip_non_business_lead_for_jobboard_title():
     skip, reason = sce.should_skip_non_business_lead(row, "vickil@indeed.com")
     assert skip is True
     assert reason in {"non_business_recipient_domain", "non_business_text_hint"}
+
+
+@pytest.mark.parametrize(
+    "email_addr, link",
+    [
+        ("bbooth@yelp.com", "https://www.yelp.com/biz/example"),
+        ("help@bbb.org", "https://www.bbb.org/us/fl/example"),
+        ("publicrelations@homeadvisor.com", "https://www.homeadvisor.com/c.example"),
+        ("veronica.hart@zoominfo.com", "https://www.manta.com/c/mx/example"),
+        ("acurls@consumeraffairs.com", "https://www.consumeraffairs.com/homeowners/viking-refrigeration.html"),
+    ],
+)
+def test_should_skip_non_business_lead_for_aggregator_domains(email_addr, link):
+    row = {
+        "name": "Directory Listing",
+        "link": link,
+        "notes": "",
+        "website": "",
+    }
+    skip, reason = sce.should_skip_non_business_lead(row, email_addr)
+    assert skip is True
+    assert reason in {"non_business_recipient_domain", "non_business_source_domain"}
+
+
+def test_should_skip_non_business_lead_for_directory_text_pattern():
+    row = {
+        "name": "Top 10 BEST Landscaping Services | Page 8",
+        "link": "https://example.com/listings",
+        "notes": "directory listing",
+        "website": "",
+    }
+    skip, reason = sce.should_skip_non_business_lead(row, "owner@example-business.com")
+    assert skip is True
+    assert reason == "non_business_text_hint"

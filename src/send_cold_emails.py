@@ -13,6 +13,7 @@ from email.header import decode_header
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from glob import glob
+from urllib.parse import urlparse
 import pandas as pd
 import dns.resolver
 
@@ -58,10 +59,20 @@ FREE_EMAIL_DOMAINS = {
 }
 NON_BUSINESS_RECIPIENT_DOMAINS = {
     "indeed.com", "linkedin.com", "wikipedia.org", "va.gov", "usa.gov",
+    "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
+    "zoominfo.com", "manta.com", "mapquest.com", "yellowpages.com",
+    "consumeraffairs.com",
+}
+NON_BUSINESS_SOURCE_DOMAINS = {
+    "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
+    "zoominfo.com", "manta.com", "wikipedia.org", "wikimedia.org", "fandom.com",
+    "indeed.com", "linkedin.com", "yellowpages.com", "mapquest.com", "zocdoc.com",
+    "consumeraffairs.com",
 }
 NON_BUSINESS_TEXT_HINTS = [
     "[pdf]", "pdf", "jobs", "job", "employment", "salary", "career", "careers",
     "university", "department of", "federal", "government", "wikipedia",
+    "directory", "reviews", "top 10", "wiki", "| page",
 ]
 EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 GENERIC_LOCAL_PARTS = {
@@ -387,6 +398,18 @@ def should_skip_non_business_lead(row, email_field):
 
     if any(token in text_blob for token in NON_BUSINESS_TEXT_HINTS):
         return True, "non_business_text_hint"
+
+    source_candidates = [
+        normalize_text_value(row.get("link", "")).lower(),
+        normalize_text_value(row.get("website", "")).lower(),
+    ]
+    for src in source_candidates:
+        if not src:
+            continue
+        parsed = urlparse(src)
+        src_domain = (parsed.netloc or "").lower().replace("www.", "")
+        if any(src_domain == d or src_domain.endswith(f".{d}") for d in NON_BUSINESS_SOURCE_DOMAINS):
+            return True, "non_business_source_domain"
 
     return False, "ok"
 

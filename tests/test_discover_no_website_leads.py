@@ -120,6 +120,23 @@ def test_should_skip_non_business_result_flags_pdf_and_jobboard(tmp_path, monkey
     ) is False
 
 
+def test_should_skip_non_business_result_flags_aggregator_domains(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    assert module.should_skip_non_business_result(
+        "TOP 10 BEST Landscaping Services",
+        "https://www.yelp.com/search?find_desc=landscaping",
+        "Yelp listings"
+    ) is True
+    assert module.should_skip_non_business_result(
+        "Top-Rated Tree Services",
+        "https://www.homeadvisor.com/c.tree-service",
+        "HomeAdvisor providers"
+    ) is True
+
+
 def test_run_serper_search_uses_cache(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))

@@ -78,6 +78,8 @@ NON_BUSINESS_DOMAIN_HINTS = {
     "pinterest.com", "reddit.com", "medium.com", "github.com", "yale.edu", "harvard.edu",
     "stanford.edu", "mit.edu", "nih.gov", "va.gov", "usa.gov", "cdc.gov", "loc.gov",
     "zocdoc.com", "healthgrades.com", "webmd.com", "mapquest.com", "yellowpages.com",
+    "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com", "manta.com",
+    "zoominfo.com", "fandom.com", "wikimedia.org", "elevatorwiki.com",
 }
 
 NON_BUSINESS_TEXT_HINTS = [
