@@ -267,6 +267,31 @@ Total replied addresses: 2
 - `GOOGLE_DISCOVERY_SEARCH_CALLS` controls how many paginated Places Text Search calls are made per city/service pair.
 - Discovery cache keys include versioning and API-key fingerprinting to avoid stale cross-key false hits.
 
+### How to switch providers (quick reference)
+
+One-off run override:
+
+```bash
+cd /Users/alexcahn/Scripts/Daily_Leads/src
+DISCOVERY_PROVIDER=google_places GOOGLE_DISCOVERY_SEARCH_CALLS=4 ./master_daily_pipeline.sh
+
+cd /Users/alexcahn/Scripts/Daily_Leads/src
+DISCOVERY_PROVIDER=serper ./master_daily_pipeline.sh
+```
+
+Persistent default in `.env`:
+
+```env
+# Force Google Places (New)
+DISCOVERY_PROVIDER=google_places
+GOOGLE_DISCOVERY_SEARCH_CALLS=4
+
+# OR force Serper
+# DISCOVERY_PROVIDER=serper
+```
+
+If `DISCOVERY_PROVIDER` is unset, the pipeline auto-selects `google_places` when `GOOGLE_PLACES_API_KEY` exists, otherwise `serper`.
+
 ## 🧾 Pending Leads Queue
 
 - `send_cold_emails.py` reads `data/pending_leads.csv` first, then current-day file rows.
