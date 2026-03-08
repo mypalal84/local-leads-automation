@@ -717,6 +717,40 @@ def test_classify_bounce_type_connection_refused_is_hard():
     assert sce.classify_bounce_type("Message not delivered", body) == "hard"
 
 
+def test_handle_bounce_event_hard_suppresses_once(monkeypatch, capsys):
+    calls = {"count": 0}
+
+    def fake_append(email_addr, reason=""):
+        calls["count"] += 1
+        assert email_addr == "info@awesomeland.org"
+        assert reason == "delivery_failure_hard"
+
+    monkeypatch.setattr(sce, "append_to_suppressions", fake_append)
+
+    seen = set()
+    first = sce.handle_bounce_event("info@awesomeland.org", "hard", seen_bounce_events=seen)
+    second = sce.handle_bounce_event("info@awesomeland.org", "hard", seen_bounce_events=seen)
+
+    out = capsys.readouterr().out
+    assert first is True
+    assert second is False
+    assert calls["count"] == 1
+    assert out.count("Hard bounce suppressed: info@awesomeland.org") == 1
+
+
+def test_handle_bounce_event_soft_logs_once(monkeypatch, capsys):
+    monkeypatch.setattr(sce, "append_to_suppressions", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not suppress soft bounce")))
+
+    seen = set()
+    first = sce.handle_bounce_event("info@organiccarpetcare.com", "soft", seen_bounce_events=seen)
+    second = sce.handle_bounce_event("info@organiccarpetcare.com", "soft", seen_bounce_events=seen)
+
+    out = capsys.readouterr().out
+    assert first is True
+    assert second is False
+    assert out.count("soft bounce detected: info@organiccarpetcare.com") == 1
+
+
 def test_should_skip_non_business_lead_for_institutional_domain():
     row = {
         "name": "[PDF] When East meets West - Yale University",

@@ -43,6 +43,8 @@ FREE_EMAIL_DOMAINS = {
 
 DIRECTORY_DOMAIN_HINTS = {
     "yelp.com",
+    "indeed.com",
+    "nextdoor.com",
     "houzz.com",
     "zocdoc.com",
     "pinterest.com",
@@ -55,6 +57,23 @@ DIRECTORY_DOMAIN_HINTS = {
     "yellowpages.com",
     "mapquest.com",
     "tripadvisor.com",
+}
+
+NON_BUSINESS_EMAIL_DOMAIN_HINTS = {
+    "yelp.com",
+    "indeed.com",
+    "nextdoor.com",
+    "linkedin.com",
+    "facebook.com",
+    "houzz.com",
+    "thumbtack.com",
+    "angi.com",
+    "angieslist.com",
+    "yellowpages.com",
+    "mapquest.com",
+    "zoominfo.com",
+    "manta.com",
+    "care.com",
 }
 
 
@@ -222,6 +241,41 @@ def is_confirmed_business_website(url_or_domain: str, business_name: str = "") -
 
     return has_live_website(domain)
 
+
+def is_non_business_domain(domain: str) -> bool:
+    clean_domain = (domain or "").strip().lower().replace("www.", "")
+    if not clean_domain:
+        return True
+    return any(
+        clean_domain == hint or clean_domain.endswith(f".{hint}")
+        for hint in DIRECTORY_DOMAIN_HINTS
+    )
+
+
+def is_viable_email_address(email_addr: str) -> bool:
+    value = (email_addr or "").strip().lower()
+    if not value or "@" not in value:
+        return False
+    domain = value.split("@", 1)[1]
+    if not domain or "." not in domain:
+        return False
+    if any(domain == hint or domain.endswith(f".{hint}") for hint in NON_BUSINESS_EMAIL_DOMAIN_HINTS):
+        return False
+    return True
+
+
+def filter_viable_emails(emails):
+    viable = []
+    seen = set()
+    for email_addr in emails or []:
+        normalized = (email_addr or "").strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if is_viable_email_address(normalized):
+            viable.append(normalized)
+    return viable
+
 # ======================================================
 # HUNTER LOOKUP
 # ======================================================
@@ -336,7 +390,12 @@ def enrich(service, town, max_leads=None):
                     print(f"[SCORE-FILTER] Skipping enrichment calls for {name}")
                 continue
 
-            query = f"{name} {town} {service} contact OR email"
+            query = (
+                f"{name} {town} {service} contact OR email "
+                f"-site:indeed.com -site:yelp.com -site:nextdoor.com -site:linkedin.com "
+                f"-site:facebook.com -site:houzz.com -site:thumbtack.com -site:angi.com "
+                f"-site:yellowpages.com -site:mapquest.com"
+            )
             links = search_serper(query)
             emails_found = []
             confirmed_site = ""
@@ -344,6 +403,12 @@ def enrich(service, town, max_leads=None):
             for link in links:
                 domain = urlparse(link).netloc.lower()
                 if not domain:
+                    continue
+                domain = domain.replace("www.", "")
+
+                if is_non_business_domain(domain):
+                    if DEBUG:
+                        print(f"[SKIP-DOMAIN] Non-business candidate domain: {domain}")
                     continue
 
                 if is_confirmed_business_website(domain, business_name=name):
@@ -353,8 +418,9 @@ def enrich(service, town, max_leads=None):
                     break
 
                 emails = hunter_email_lookup(domain)
-                if emails:
-                    emails_found = emails
+                viable_emails = filter_viable_emails(emails)
+                if viable_emails:
+                    emails_found = viable_emails
                     break
 
             if confirmed_site:

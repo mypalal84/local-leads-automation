@@ -482,6 +482,26 @@ def extract_bounced_recipient(msg, body_text):
 
     return ""
 
+
+def handle_bounce_event(bounced_email, bounce_type, seen_bounce_events=None):
+    bounced_email = (bounced_email or "").strip().lower()
+    bounce_type = (bounce_type or "unknown").strip().lower() or "unknown"
+    if not bounced_email:
+        return False
+
+    event_key = (bounce_type, bounced_email)
+    if seen_bounce_events is not None and event_key in seen_bounce_events:
+        return False
+    if seen_bounce_events is not None:
+        seen_bounce_events.add(event_key)
+
+    if bounce_type == "hard":
+        append_to_suppressions(bounced_email, reason="delivery_failure_hard")
+        print(f"[BOUNCE] Hard bounce suppressed: {bounced_email}")
+    else:
+        print(f"[BOUNCE] {bounce_type} bounce detected: {bounced_email} (not auto-suppressed)")
+    return True
+
 def find_latest_verified_file():
     files = sorted(
         glob(os.path.join(DATA_DIR, "leads_*_NO_WEBSITE_*.csv")) +
@@ -1010,6 +1030,7 @@ def fetch_replies():
         print(f"[INFO] Checking {len(ids)} recent messages for replies...")
         replied_addresses = set()
         processed_ids = load_processed_message_ids()
+        seen_bounce_events = set()
 
         with open(REPLIES_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -1037,12 +1058,11 @@ def fetch_replies():
                 if is_delivery_status_notification(msg, subject):
                     bounced_email = extract_bounced_recipient(msg, body)
                     bounce_type = classify_bounce_type(subject, body)
+                    if message_id:
+                        processed_ids.add(message_id)
+                        append_processed_message_id(message_id)
                     if bounced_email:
-                        if bounce_type == "hard":
-                            append_to_suppressions(bounced_email, reason="delivery_failure_hard")
-                            print(f"[BOUNCE] Hard bounce suppressed: {bounced_email}")
-                        else:
-                            print(f"[BOUNCE] {bounce_type} bounce detected: {bounced_email} (not auto-suppressed)")
+                        handle_bounce_event(bounced_email, bounce_type, seen_bounce_events=seen_bounce_events)
                     continue
 
                 if is_auto_reply(msg, subject):

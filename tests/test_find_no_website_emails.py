@@ -308,6 +308,24 @@ def test_is_confirmed_business_website_accepts_live_non_directory_domain(monkeyp
     assert enrich_mod.is_confirmed_business_website("https://callmilestone.com/duncanville/") is True
 
 
+def test_is_non_business_domain_flags_directory_sites():
+    assert enrich_mod.is_non_business_domain("www.indeed.com") is True
+    assert enrich_mod.is_non_business_domain("nextdoor.com") is True
+    assert enrich_mod.is_non_business_domain("acmefencing.com") is False
+
+
+def test_filter_viable_emails_excludes_non_business_domains():
+    filtered = enrich_mod.filter_viable_emails(
+        [
+            "bbooth@yelp.com",
+            "owner@acmefencing.com",
+            "kmcnamara@nextdoor.com",
+            "OWNER@acmefencing.com",
+        ]
+    )
+    assert filtered == ["owner@acmefencing.com"]
+
+
 def test_enrich_keeps_website_empty_when_email_found_on_unconfirmed_domain(tmp_path, monkeypatch):
     data_dir = pathlib.Path(tmp_path)
     monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
@@ -345,3 +363,45 @@ def test_enrich_keeps_website_empty_when_email_found_on_unconfirmed_domain(tmp_p
     assert len(out_df) == 1
     assert out_df.loc[0, "emails"] == "owner@acmefencing.com"
     assert str(out_df.loc[0, "website"]).strip() in {"", "nan"}
+
+
+def test_enrich_skips_non_business_email_domains(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+
+    service = "Dry Cleaners"
+    town = "Rochester, NY"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Local Cleaner",
+                "emails": "",
+                "website": "",
+                "notes": "",
+                "link": "",
+            }
+        )
+
+    monkeypatch.setattr(enrich_mod, "search_serper", lambda _query: ["https://example-directory-result.com/contact"])
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+    monkeypatch.setattr(
+        enrich_mod,
+        "hunter_email_lookup",
+        lambda _domain: ["bbooth@yelp.com", "owner@localcleaner.com", "kmcnamara@nextdoor.com"],
+    )
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+
+    out_df = pd.read_csv(in_path)
+    assert len(out_df) == 1
+    assert out_df.loc[0, "emails"] == "owner@localcleaner.com"
