@@ -68,7 +68,8 @@ NON_BUSINESS_RECIPIENT_DOMAINS = {
     "indeed.com", "linkedin.com", "wikipedia.org", "va.gov", "usa.gov",
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
     "zoominfo.com", "manta.com", "mapquest.com", "yellowpages.com",
-    "consumeraffairs.com", "houzz.com",
+    "consumeraffairs.com", "houzz.com", "showmelocal.com", "groups.io",
+    "instagram.com", "facebook.com", "tiktok.com", "youtube.com", "pinterest.com",
 }
 NON_BUSINESS_SOURCE_DOMAINS = {
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
@@ -134,6 +135,20 @@ SOFT_BOUNCE_HINT_TOKENS = [
     "temporarily", "try again later", "deferred", "greylist", "rate limit"
 ]
 MX_CACHE = {}
+
+DEFAULT_BLOCKED_RECIPIENT_DOMAINS = {
+    "groups.io", "showmelocal.com", "instagram.com", "facebook.com", "linkedin.com",
+    "tiktok.com", "youtube.com", "pinterest.com", "mapquest.com", "yellowpages.com",
+    "yelp.com", "bbb.org", "angi.com", "thumbtack.com", "homeadvisor.com", "houzz.com",
+    "zoominfo.com", "manta.com", "consumeraffairs.com",
+}
+
+BLOCKED_RECIPIENT_DOMAINS_EXTRA = {
+    d.strip().lower()
+    for d in os.getenv("BLOCKED_RECIPIENT_DOMAINS_EXTRA", "").split(",")
+    if d.strip()
+}
+BLOCKED_RECIPIENT_DOMAINS = DEFAULT_BLOCKED_RECIPIENT_DOMAINS | BLOCKED_RECIPIENT_DOMAINS_EXTRA
 
 os.makedirs(DAILY_SENT_DIR, exist_ok=True)
 
@@ -581,8 +596,10 @@ def should_skip_non_business_lead(row, email_field):
         domain = email_field.split("@")[-1]
         if domain.endswith(".gov") or domain.endswith(".edu"):
             return True, "institutional_domain"
-        if domain in NON_BUSINESS_RECIPIENT_DOMAINS:
+        if domain_matches_any(domain, NON_BUSINESS_RECIPIENT_DOMAINS):
             return True, "non_business_recipient_domain"
+        if domain_matches_any(domain, BLOCKED_RECIPIENT_DOMAINS):
+            return True, "blocked_recipient_domain"
 
     name = normalize_text_value(row.get("name", "")).lower()
     notes = normalize_text_value(row.get("notes", "")).lower()
@@ -615,6 +632,19 @@ def extract_domain_from_url(raw_url):
     parsed = urlparse(raw_url)
     domain = (parsed.netloc or "").lower().replace("www.", "")
     return domain
+
+
+def domain_matches_any(domain, domain_set):
+    domain = (domain or "").strip().lower().replace("www.", "")
+    if not domain:
+        return False
+    for blocked in domain_set:
+        blocked = (blocked or "").strip().lower()
+        if not blocked:
+            continue
+        if domain == blocked or domain.endswith(f".{blocked}"):
+            return True
+    return False
 
 
 def should_skip_domain_mismatch(row, email_field):

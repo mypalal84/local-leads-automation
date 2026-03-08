@@ -105,6 +105,8 @@ GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD=150
 # Sender queue/reply behavior
 BLOCK_GENERIC_INBOXES=false
 SKIP_REPLY_CHECK_CLEANUP=false
+# Optional comma-separated extra recipient domains to never send to
+# BLOCKED_RECIPIENT_DOMAINS_EXTRA=example.com,example.org
 
 # Optional footer appended to cold emails
 UNSUBSCRIBE_FOOTER="If you'd prefer not to hear from me again, reply STOP and I will remove you immediately."
