@@ -612,6 +612,15 @@ def enrich(service, town, max_leads=None):
                 emails = hunter_email_lookup(domain)
                 viable_emails = filter_viable_emails(emails)
                 if viable_emails:
+                    # Guardrail: if the email domain itself has a live business site,
+                    # this is not a true no-website lead.
+                    email_domain = viable_emails[0].split("@", 1)[1].lower()
+                    if is_confirmed_business_website(email_domain, business_name=name):
+                        confirmed_site = f"http://{email_domain}"
+                        if DEBUG:
+                            print(f"[SKIP] Confirmed website via email domain: {email_domain}")
+                        break
+
                     emails_found = viable_emails
                     break
 

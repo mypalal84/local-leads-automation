@@ -405,3 +405,41 @@ def test_enrich_skips_non_business_email_domains(tmp_path, monkeypatch):
     out_df = pd.read_csv(in_path)
     assert len(out_df) == 1
     assert out_df.loc[0, "emails"] == "owner@localcleaner.com"
+
+
+def test_enrich_skips_when_email_domain_has_live_website(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+
+    service = "Martial Arts Schools"
+    town = "Montgomery, AL"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Tiger Rock Martial Arts Montgomery",
+                "emails": "",
+                "website": "",
+                "notes": "",
+                "link": "",
+            }
+        )
+
+    monkeypatch.setattr(enrich_mod, "search_serper", lambda _query: ["https://example-directory-result.com/contact"])
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", lambda _domain: ["bpadilla@tigerrockmartialarts.com"])
+    monkeypatch.setattr(
+        enrich_mod,
+        "has_live_website",
+        lambda domain: (domain or "").replace("www.", "") == "tigerrockmartialarts.com",
+    )
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path is None
