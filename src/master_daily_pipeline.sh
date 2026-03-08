@@ -102,6 +102,7 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000:=35}"
 : "${GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000:=20}"
 : "${GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD:=0}"
+: "${LOG_ROTATE_MAX_MB:=10}"
 
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 
@@ -180,7 +181,41 @@ prune_old_metrics_archives() {
   fi
 }
 
+rotate_log_if_large() {
+  local file_path="$1"
+  local archive_stamp="$2"
+  local max_mb="$LOG_ROTATE_MAX_MB"
+
+  if [[ ! -f "$file_path" ]]; then
+    return
+  fi
+  if ! [[ "$max_mb" =~ ^[0-9]+$ ]] || (( max_mb <= 0 )); then
+    return
+  fi
+
+  local max_bytes=$((max_mb * 1024 * 1024))
+  local file_bytes
+  file_bytes=$(wc -c < "$file_path" 2>/dev/null || echo 0)
+  if (( file_bytes <= max_bytes )); then
+    return
+  fi
+
+  local archive_session_dir="$LOG_DIR/archive/$archive_stamp"
+  mkdir -p "$archive_session_dir"
+  local base_name
+  base_name="$(basename "$file_path")"
+  local rotated_path="$archive_session_dir/${base_name%.log}_${archive_stamp}.log"
+
+  if mv "$file_path" "$rotated_path" 2>/dev/null; then
+    : > "$file_path"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [LOG-ROTATE] Rotated $base_name (${file_bytes} bytes) -> $rotated_path"
+  fi
+}
+
 RUN_ID="$(date '+%Y-%m-%d_%H-%M-%S')"
+rotate_log_if_large "$LOG_DIR/summary.log" "$RUN_ID"
+rotate_log_if_large "$LOG_DIR/email.log" "$RUN_ID"
+rotate_log_if_large "$LOG_DIR/pytest_latest.log" "$RUN_ID"
 archive_run_metrics_files "$RUN_ID"
 prune_old_metrics_archives
 RUN_METRICS_FILE="$RUN_METRICS_DIR/run_metrics_${RUN_ID}.json"

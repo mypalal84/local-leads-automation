@@ -39,6 +39,7 @@ CACHE_DIR = os.path.join(DATA_DIR, "cache")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
+CACHE_MAX_MB = int(os.getenv("CACHE_MAX_MB", "256"))
 GOOGLE_DISCOVERY_SEARCH_CALLS = int(os.getenv("GOOGLE_DISCOVERY_SEARCH_CALLS", "2"))
 GOOGLE_DISCOVERY_TARGET_LEADS = int(os.getenv("GOOGLE_DISCOVERY_TARGET_LEADS", "12"))
 GOOGLE_DETAILS_FALLBACK_LIMIT = int(os.getenv("GOOGLE_DETAILS_FALLBACK_LIMIT", "8"))
@@ -276,7 +277,47 @@ def prune_expired_cache():
     return removed
 
 
+def prune_cache_size_limit():
+    if CACHE_MAX_MB <= 0 or not os.path.isdir(CACHE_DIR):
+        return 0
+
+    limit_bytes = CACHE_MAX_MB * 1024 * 1024
+    files = []
+    total_size = 0
+
+    for name in os.listdir(CACHE_DIR):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(CACHE_DIR, name)
+        try:
+            stat = os.stat(path)
+            files.append((path, stat.st_mtime, stat.st_size))
+            total_size += stat.st_size
+        except Exception:
+            continue
+
+    if total_size <= limit_bytes:
+        return 0
+
+    files.sort(key=lambda item: item[1])
+    removed = 0
+    for path, _, file_size in files:
+        if total_size <= limit_bytes:
+            break
+        try:
+            os.remove(path)
+            removed += 1
+            total_size -= file_size
+        except Exception:
+            continue
+
+    if removed:
+        print(f"[CACHE] Pruned {removed} cache file(s) to enforce CACHE_MAX_MB={CACHE_MAX_MB}.")
+    return removed
+
+
 prune_expired_cache()
+prune_cache_size_limit()
 
 # ======================================================
 # RETRY WRAPPER
