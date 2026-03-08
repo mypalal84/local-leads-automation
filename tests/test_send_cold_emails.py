@@ -81,6 +81,43 @@ def test_daily_cap_short_circuits_send(tmp_path, monkeypatch, capsys):
     assert "Daily cap reached" in out
 
 
+def test_append_logs_include_lead_score_metadata(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    sent_log = data_dir / "sent_log.csv"
+    daily_log = data_dir / "daily_sent_2026-02-26.csv"
+
+    monkeypatch.setattr(sce, "SENT_LOG", str(sent_log))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(daily_log))
+
+    sce.append_to_log("owner@example.com", lead_score=4, source_file="/tmp/leads_example.csv")
+    sce.append_to_daily_log("owner@example.com", lead_score=4, source_file="/tmp/leads_example.csv")
+
+    with open(sent_log, newline="", encoding="utf-8") as f:
+        sent_row = next(csv.reader(f))
+    with open(daily_log, newline="", encoding="utf-8") as f:
+        daily_row = next(csv.reader(f))
+
+    assert sent_row[0] == "owner@example.com"
+    assert sent_row[1] == "4"
+    assert sent_row[3] == "leads_example.csv"
+    assert daily_row[0] == "owner@example.com"
+    assert daily_row[1] == "4"
+    assert daily_row[3] == "leads_example.csv"
+
+
+def test_load_sent_log_ignores_header_like_rows(tmp_path, monkeypatch):
+    sent_log = pathlib.Path(tmp_path) / "sent_log.csv"
+    with open(sent_log, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["email", "lead_score", "sent_at", "source_file"])
+        writer.writerow(["real@example.com", "3", "2026-03-08T12:00:00", "leads.csv"])
+
+    monkeypatch.setattr(sce, "SENT_LOG", str(sent_log))
+    loaded = sce.load_sent_log()
+
+    assert loaded == {"real@example.com"}
+
+
 def test_suppression_list_skips_addresses(tmp_path, monkeypatch):
     data_dir = pathlib.Path(tmp_path)
     csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
@@ -171,6 +208,7 @@ def test_pending_queue_reuses_qualified_unsent_leads(tmp_path, monkeypatch):
         pending_rows = list(csv.DictReader(f))
     assert len(pending_rows) == 1
     assert pending_rows[0]["emails"] == "second@examplebiz.com"
+    assert pending_rows[0]["lead_score"] != ""
 
     monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-27.csv"))
     monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 5)
@@ -184,6 +222,55 @@ def test_pending_queue_reuses_qualified_unsent_leads(tmp_path, monkeypatch):
     with open(pending_path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert rows == []
+
+
+def test_sender_dry_run_prioritizes_highest_score_first(tmp_path, monkeypatch, capsys):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Low Score Biz",
+                "emails": "low@gmail.com",
+                "website": "",
+                "notes": "",
+                "link": "",
+            }
+        )
+        writer.writerow(
+            {
+                "name": "High Score Business",
+                "emails": "high@highscorebiz.com",
+                "website": "",
+                "notes": "under construction",
+                "link": "",
+            }
+        )
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "PENDING_LEADS_FILE", str(data_dir / "pending_leads.csv"))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", False)
+    monkeypatch.setattr(sce, "DRY_RUN", True)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+    out = capsys.readouterr().out
+
+    high_idx = out.index("[DRY-SEND] High Score Business")
+    low_idx = out.index("[DRY-SEND] Low Score Biz")
+    assert high_idx < low_idx
 
 
 def test_resolve_row_context_uses_source_file_when_row_context_missing():
