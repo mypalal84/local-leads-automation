@@ -97,6 +97,11 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
 : "${LOG_ARCHIVE_RETENTION_DAYS:=60}"
 : "${DRY_RUN:=false}"
+: "${API_SUCCESS_RATE_ALERT_THRESHOLD:=90}"
+: "${EFFICIENCY_MIN_EMAILS_PER_API_CALL:=0.2}"
+: "${GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000:=35}"
+: "${GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000:=20}"
+: "${GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD:=0}"
 
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 
@@ -180,9 +185,48 @@ archive_run_metrics_files "$RUN_ID"
 prune_old_metrics_archives
 RUN_METRICS_FILE="$RUN_METRICS_DIR/run_metrics_${RUN_ID}.json"
 export PIPELINE_RUN_METRICS_FILE="$RUN_METRICS_FILE"
+RUN_START_EPOCH="$(date +%s)"
+DISCOVERY_DURATION_SEC=0
+ENRICH_DURATION_SEC=0
+OUTREACH_DURATION_SEC=0
+PENDING_FILE="${PENDING_LEADS_FILE:-$DATA_DIR/pending_leads.csv}"
 
 cat > "$RUN_METRICS_FILE" <<EOF
-{"google_places": 0, "serper": 0, "hunter": 0}
+{
+  "google_places": 0,
+  "serper": 0,
+  "hunter": 0,
+  "google_places_calls": 0,
+  "google_places_success": 0,
+  "google_places_error": 0,
+  "google_places_cache_hit": 0,
+  "google_places_latency_ms_sum": 0,
+  "google_places_latency_ms_count": 0,
+  "google_places_text_search_calls": 0,
+  "google_places_text_search_success": 0,
+  "google_places_text_search_error": 0,
+  "google_places_text_search_cache_hit": 0,
+  "google_places_text_search_latency_ms_sum": 0,
+  "google_places_text_search_latency_ms_count": 0,
+  "google_places_details_calls": 0,
+  "google_places_details_success": 0,
+  "google_places_details_error": 0,
+  "google_places_details_cache_hit": 0,
+  "google_places_details_latency_ms_sum": 0,
+  "google_places_details_latency_ms_count": 0,
+  "serper_calls": 0,
+  "serper_success": 0,
+  "serper_error": 0,
+  "serper_cache_hit": 0,
+  "serper_latency_ms_sum": 0,
+  "serper_latency_ms_count": 0,
+  "hunter_calls": 0,
+  "hunter_success": 0,
+  "hunter_error": 0,
+  "hunter_cache_hit": 0,
+  "hunter_latency_ms_sum": 0,
+  "hunter_latency_ms_count": 0
+}
 EOF
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
@@ -344,17 +388,23 @@ while IFS='|' read -r service city; do
 
   # Step 1: Discovery
   log "[DISCOVERY] Finding leads without websites -> $service | $city" | tee -a "$LOG_DIR/summary.log"
+  step_started_epoch="$(date +%s)"
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping discovery command." | tee -a "$LOG_DIR/summary.log"
   else
     if ! "$PYTHON_BIN" "$SRC_DIR/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+      step_finished_epoch="$(date +%s)"
+      DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
     fi
   fi
+  step_finished_epoch="$(date +%s)"
+  DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
 
   # Step 2: Enrichment
   log "[INFO] Enriching leads for $service | $city" | tee -a "$LOG_DIR/summary.log"
+  step_started_epoch="$(date +%s)"
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping enrichment command." | tee -a "$LOG_DIR/summary.log"
   else
@@ -369,10 +419,14 @@ while IFS='|' read -r service city; do
     fi
     log "[BUDGET] remaining_quota=$remaining_quota, pairs_remaining=$pairs_remaining, quota_slice=$quota_slice, enrich_limit=$enrich_limit" | tee -a "$LOG_DIR/summary.log"
     if ! "$PYTHON_BIN" "$SRC_DIR/find_no_website_emails.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
+      step_finished_epoch="$(date +%s)"
+      ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
     fi
   fi
+  step_finished_epoch="$(date +%s)"
+  ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
 
   safe_city="$(sanitize_for_filename "$city")"
   safe_service="$(sanitize_for_filename "$service")"
@@ -385,6 +439,7 @@ while IFS='|' read -r service city; do
 
   # Step 3: Outreach
   log "[INFO] Starting outreach for $service | $city" | tee -a "$LOG_DIR/email.log"
+  step_started_epoch="$(date +%s)"
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping outreach command for $OUT_FILE" | tee -a "$LOG_DIR/email.log"
   else
@@ -392,6 +447,8 @@ while IFS='|' read -r service city; do
       log "[ERR] Email send failed for $service | $city" | tee -a "$LOG_DIR/email.log"
     fi
   fi
+  step_finished_epoch="$(date +%s)"
+  OUTREACH_DURATION_SEC=$((OUTREACH_DURATION_SEC + step_finished_epoch - step_started_epoch))
 
   log "--- Sleeping ${DELAY_BETWEEN_RUNS}s ---" | tee -a "$LOG_DIR/summary.log"
   sleep "$DELAY_BETWEEN_RUNS"
@@ -403,42 +460,282 @@ rm -f "$PAIR_FILE"
 # Build daily summary
 sent_count=$(grep -c "\[SENT\]" "$LOG_DIR/email.log" 2>/dev/null || true)
 reply_count=$(grep -c "\[REPLY\]" "$LOG_DIR/email.log" 2>/dev/null || true)
+hard_bounce_count=$(grep -c "\[BOUNCE\] Hard bounce" "$LOG_DIR/email.log" 2>/dev/null || true)
+soft_bounce_count=$(grep -c "\[BOUNCE\] soft bounce" "$LOG_DIR/email.log" 2>/dev/null || true)
 lead_count=$(ls "$DATA_DIR"/leads_* 2>/dev/null | wc -l | awk '{print $1}')
 sent_today_end=$(today_sent_count)
 remaining_quota_end=$((DAILY_EMAIL_TARGET - sent_today_end))
+RUN_END_EPOCH="$(date +%s)"
+RUN_DURATION_SEC=$((RUN_END_EPOCH - RUN_START_EPOCH))
 if (( remaining_quota_end < 0 )); then
   remaining_quota_end=0
 fi
 
-KPI_CSV="$LOG_DIR/daily_kpi.csv"
-if [[ ! -f "$KPI_CSV" ]]; then
-  echo "date,timestamp,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,total_lead_files,sent_today_total,remaining_quota_end" > "$KPI_CSV"
+pending_queue_size_end=0
+if [[ -f "$PENDING_FILE" ]]; then
+  pending_lines=$(wc -l < "$PENDING_FILE" | awk '{print $1}')
+  if (( pending_lines > 0 )); then
+    pending_queue_size_end=$((pending_lines - 1))
+  fi
 fi
-echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},$lead_count,$sent_today_end,$remaining_quota_end" >> "$KPI_CSV"
-log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
 
-api_counts=$("$PYTHON_BIN" - <<END
+RUN_HISTORY_CSV="$RUN_METRICS_DIR/history.csv"
+
+metrics_snapshot=$(RUN_SENT_COUNT="$sent_count" RUN_HISTORY_CSV="$RUN_HISTORY_CSV" GOOGLE_TEXT_PRICE_PER_1000="$GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000" GOOGLE_DETAILS_PRICE_PER_1000="$GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000" "$PYTHON_BIN" - <<END
 import json, os
+import csv
+from datetime import datetime
+import calendar
+
 path = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
-data = {"google_places": 0, "serper": 0, "hunter": 0}
+run_history_csv = os.getenv("RUN_HISTORY_CSV", "")
+sent_in_run = int(os.getenv("RUN_SENT_COUNT", "0") or 0)
+google_text_price_per_1000 = float(os.getenv("GOOGLE_TEXT_PRICE_PER_1000", "35") or 35)
+google_details_price_per_1000 = float(os.getenv("GOOGLE_DETAILS_PRICE_PER_1000", "20") or 20)
+
+keys = {
+    "google_places": 0,
+    "serper": 0,
+    "hunter": 0,
+    "google_places_calls": 0,
+    "google_places_success": 0,
+    "google_places_error": 0,
+    "google_places_cache_hit": 0,
+    "google_places_latency_ms_sum": 0,
+    "google_places_latency_ms_count": 0,
+    "google_places_text_search_calls": 0,
+    "google_places_text_search_success": 0,
+    "google_places_text_search_error": 0,
+    "google_places_text_search_cache_hit": 0,
+    "google_places_text_search_latency_ms_sum": 0,
+    "google_places_text_search_latency_ms_count": 0,
+    "google_places_details_calls": 0,
+    "google_places_details_success": 0,
+    "google_places_details_error": 0,
+    "google_places_details_cache_hit": 0,
+    "google_places_details_latency_ms_sum": 0,
+    "google_places_details_latency_ms_count": 0,
+    "serper_calls": 0,
+    "serper_success": 0,
+    "serper_error": 0,
+    "serper_cache_hit": 0,
+    "serper_latency_ms_sum": 0,
+    "serper_latency_ms_count": 0,
+    "hunter_calls": 0,
+    "hunter_success": 0,
+    "hunter_error": 0,
+    "hunter_cache_hit": 0,
+    "hunter_latency_ms_sum": 0,
+    "hunter_latency_ms_count": 0,
+}
+
 if path and os.path.isfile(path):
-  try:
-    with open(path, "r", encoding="utf-8") as f:
-      loaded = json.load(f)
-    for k in data:
-      data[k] = int(loaded.get(k, 0) or 0)
-  except Exception:
-    pass
-print(f"{data['google_places']}|{data['serper']}|{data['hunter']}")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        for k in keys:
+            keys[k] = int(loaded.get(k, 0) or 0)
+    except Exception:
+        pass
+
+now = datetime.now()
+month_prefix = now.strftime("%Y-%m")
+
+def as_int(value):
+    try:
+        return int(float(value or 0))
+    except Exception:
+        return 0
+
+prior_text_calls_mtd = 0
+prior_details_calls_mtd = 0
+if run_history_csv and os.path.isfile(run_history_csv):
+    try:
+        with open(run_history_csv, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ts = (row or {}).get("timestamp", "")
+                if not ts.startswith(month_prefix):
+                    continue
+                prior_text_calls_mtd += as_int(row.get("google_places_text_search_calls", 0))
+                prior_details_calls_mtd += as_int(row.get("google_places_details_calls", 0))
+    except Exception:
+        pass
+
+def tiered_cost(calls, tiers):
+    # tiers: list of (start_inclusive, end_exclusive_or_none, price_per_1000)
+    remaining = max(0, int(calls))
+    total = 0.0
+    for start, end, price in tiers:
+        if remaining <= start:
+            continue
+        upper = remaining if end is None else min(remaining, end)
+        units = max(0, upper - start)
+        if units:
+            total += (units / 1000.0) * float(price)
+    return total
+
+text_tiers = [
+    (0, 1000, 0.0),
+    (1000, 100000, google_text_price_per_1000),
+    (100000, 500000, 28.0),
+    (500000, 1000000, 21.0),
+    (1000000, 5000000, 10.5),
+    (5000000, None, 2.63),
+]
+details_tiers = [
+    (0, 1000, 0.0),
+    (1000, 100000, google_details_price_per_1000),
+    (100000, 500000, 16.0),
+    (500000, 1000000, 12.0),
+    (1000000, 5000000, 6.0),
+    (5000000, None, 1.51),
+]
+
+api_calls_total = keys["google_places_calls"] + keys["serper_calls"] + keys["hunter_calls"]
+api_success_total = keys["google_places_success"] + keys["serper_success"] + keys["hunter_success"]
+api_error_total = keys["google_places_error"] + keys["serper_error"] + keys["hunter_error"]
+cache_hits_total = keys["google_places_cache_hit"] + keys["serper_cache_hit"] + keys["hunter_cache_hit"]
+api_success_rate = (100.0 * api_success_total / api_calls_total) if api_calls_total else 0.0
+cache_hit_rate = (100.0 * cache_hits_total / (api_calls_total + cache_hits_total)) if (api_calls_total + cache_hits_total) else 0.0
+emails_per_api_call = (float(sent_in_run) / api_calls_total) if api_calls_total else 0.0
+google_text_calls = keys["google_places_text_search_calls"]
+google_details_calls = keys["google_places_details_calls"]
+text_calls_mtd_after = prior_text_calls_mtd + google_text_calls
+details_calls_mtd_after = prior_details_calls_mtd + google_details_calls
+text_cost_mtd_before = tiered_cost(prior_text_calls_mtd, text_tiers)
+details_cost_mtd_before = tiered_cost(prior_details_calls_mtd, details_tiers)
+text_cost_mtd_after = tiered_cost(text_calls_mtd_after, text_tiers)
+details_cost_mtd_after = tiered_cost(details_calls_mtd_after, details_tiers)
+google_cost_estimated_run = (text_cost_mtd_after + details_cost_mtd_after) - (text_cost_mtd_before + details_cost_mtd_before)
+google_cost_estimated_mtd = text_cost_mtd_after + details_cost_mtd_after
+days_in_month = calendar.monthrange(now.year, now.month)[1]
+elapsed_days = max(1, now.day)
+google_cost_estimated_monthly_projected = (google_cost_estimated_mtd / elapsed_days) * days_in_month
+emails_per_google_dollar = (float(sent_in_run) / google_cost_estimated_run) if google_cost_estimated_run > 0 else 0.0
+
+def avg_latency(provider):
+    count = keys.get(f"{provider}_latency_ms_count", 0)
+    total = keys.get(f"{provider}_latency_ms_sum", 0)
+    return (total / count) if count else 0.0
+
+print("|".join([
+    str(keys["google_places"]),
+    str(keys["serper"]),
+    str(keys["hunter"]),
+    str(keys["google_places_calls"]),
+    str(keys["serper_calls"]),
+    str(keys["hunter_calls"]),
+    str(keys["google_places_success"]),
+    str(keys["serper_success"]),
+    str(keys["hunter_success"]),
+    str(keys["google_places_error"]),
+    str(keys["serper_error"]),
+    str(keys["hunter_error"]),
+    str(keys["google_places_cache_hit"]),
+    str(keys["google_places_text_search_calls"]),
+    str(keys["google_places_details_calls"]),
+    str(keys["serper_cache_hit"]),
+    str(keys["hunter_cache_hit"]),
+    f"{avg_latency('google_places'):.1f}",
+    f"{avg_latency('serper'):.1f}",
+    f"{avg_latency('hunter'):.1f}",
+    str(api_calls_total),
+    str(api_success_total),
+    str(api_error_total),
+    str(cache_hits_total),
+    f"{api_success_rate:.2f}",
+    f"{cache_hit_rate:.2f}",
+    f"{emails_per_api_call:.3f}",
+    f"{google_cost_estimated_run:.4f}",
+    f"{google_cost_estimated_mtd:.4f}",
+    f"{google_cost_estimated_monthly_projected:.2f}",
+    f"{emails_per_google_dollar:.3f}",
+]))
 END
 )
-IFS='|' read -r api_google_places_count api_serper_count api_hunter_count <<< "$api_counts"
+
+IFS='|' read -r \
+  api_google_places_count api_serper_count api_hunter_count \
+  api_google_places_calls api_serper_calls api_hunter_calls \
+  api_google_places_success api_serper_success api_hunter_success \
+  api_google_places_error api_serper_error api_hunter_error \
+  api_google_places_cache_hit api_google_places_text_search_calls api_google_places_details_calls api_serper_cache_hit api_hunter_cache_hit \
+  api_google_places_avg_latency_ms api_serper_avg_latency_ms api_hunter_avg_latency_ms \
+  api_calls_total api_success_total api_error_total api_cache_hits_total \
+  api_success_rate cache_hit_rate emails_per_api_call \
+  google_cost_estimated_run google_cost_estimated_mtd google_cost_estimated_monthly_projected emails_per_google_dollar <<< "$metrics_snapshot"
+
+KPI_CSV="$LOG_DIR/daily_kpi.csv"
+if [[ -f "$KPI_CSV" ]]; then
+  existing_header="$(head -n 1 "$KPI_CSV")"
+  if [[ "$existing_header" != *"google_cost_estimated_mtd"* ]]; then
+    mv "$KPI_CSV" "$KPI_CSV.pre_metrics_${RUN_ID}.bak"
+  fi
+fi
+if [[ ! -f "$KPI_CSV" ]]; then
+  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,total_lead_files,sent_today_total,remaining_quota_end,pending_queue_end,run_duration_sec,discovery_duration_sec,enrich_duration_sec,outreach_duration_sec,api_calls_total,api_success_total,api_error_total,api_success_rate,cache_hits_total,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$KPI_CSV"
+fi
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$lead_count,$sent_today_end,$remaining_quota_end,$pending_queue_size_end,$RUN_DURATION_SEC,$DISCOVERY_DURATION_SEC,$ENRICH_DURATION_SEC,$OUTREACH_DURATION_SEC,${api_calls_total:-0},${api_success_total:-0},${api_error_total:-0},${api_success_rate:-0},${api_cache_hits_total:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$KPI_CSV"
+log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
+
+if [[ -f "$RUN_HISTORY_CSV" ]]; then
+  history_header="$(head -n 1 "$RUN_HISTORY_CSV")"
+  if [[ "$history_header" != *"google_cost_estimated_mtd"* ]]; then
+    mv "$RUN_HISTORY_CSV" "$RUN_HISTORY_CSV.pre_google_cost_${RUN_ID}.bak"
+  fi
+fi
+if [[ ! -f "$RUN_HISTORY_CSV" ]]; then
+  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,pending_queue_end,run_duration_sec,api_calls_total,api_success_rate,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$RUN_HISTORY_CSV"
+fi
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$pending_queue_size_end,$RUN_DURATION_SEC,${api_calls_total:-0},${api_success_rate:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$RUN_HISTORY_CSV"
+log "[KPI] Appended run metrics history row -> $RUN_HISTORY_CSV" | tee -a "$LOG_DIR/summary.log"
+
+success_alert=$(awk -v success="$api_success_rate" -v threshold="$API_SUCCESS_RATE_ALERT_THRESHOLD" 'BEGIN {print ((success + 0.0) < (threshold + 0.0)) ? 1 : 0}')
+efficiency_alert=0
+if (( ${api_calls_total:-0} > 0 )); then
+  efficiency_alert=$(awk -v ratio="$emails_per_api_call" -v threshold="$EFFICIENCY_MIN_EMAILS_PER_API_CALL" 'BEGIN {print ((ratio + 0.0) < (threshold + 0.0)) ? 1 : 0}')
+fi
+projected_cost_alert=0
+if awk -v threshold="$GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD" 'BEGIN {exit !((threshold + 0.0) > 0)}'; then
+  projected_cost_alert=$(awk -v projected="$google_cost_estimated_monthly_projected" -v threshold="$GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD" 'BEGIN {print ((projected + 0.0) > (threshold + 0.0)) ? 1 : 0}')
+fi
+
+ALERTS_TEXT="No threshold alerts triggered."
+if [[ "$success_alert" == "1" || "$efficiency_alert" == "1" || "$projected_cost_alert" == "1" || "${hard_bounce_count:-0}" -gt 0 ]]; then
+  ALERTS_TEXT=""
+  if [[ "$success_alert" == "1" ]]; then
+    ALERTS_TEXT+="- API success rate below threshold (${api_success_rate}% < ${API_SUCCESS_RATE_ALERT_THRESHOLD}%)\n"
+  fi
+  if [[ "$efficiency_alert" == "1" ]]; then
+    ALERTS_TEXT+="- Emails per API call below threshold (${emails_per_api_call} < ${EFFICIENCY_MIN_EMAILS_PER_API_CALL})\n"
+  fi
+  if [[ "$projected_cost_alert" == "1" ]]; then
+    ALERTS_TEXT+="- Projected month-end Google cost above threshold ($${google_cost_estimated_monthly_projected} > $${GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD})\n"
+  fi
+  if [[ "${hard_bounce_count:-0}" -gt 0 ]]; then
+    ALERTS_TEXT+="- Hard bounces detected: ${hard_bounce_count}\n"
+  fi
+fi
+ALERTS_TEXT_RENDERED="$(printf "%b" "$ALERTS_TEXT")"
 
 API_SUMMARY=$(cat <<EOF
 API Calls This Run:
-- Google Places: ${api_google_places_count:-0}
-- Serper: ${api_serper_count:-0}
-- Hunter: ${api_hunter_count:-0}
+- Google Places: ${api_google_places_count:-0} (calls=${api_google_places_calls:-0}, success=${api_google_places_success:-0}, error=${api_google_places_error:-0}, cache_hit=${api_google_places_cache_hit:-0}, avg_latency_ms=${api_google_places_avg_latency_ms:-0})
+  - Text Search calls: ${api_google_places_text_search_calls:-0}
+  - Place Details calls: ${api_google_places_details_calls:-0}
+- Serper: ${api_serper_count:-0} (calls=${api_serper_calls:-0}, success=${api_serper_success:-0}, error=${api_serper_error:-0}, cache_hit=${api_serper_cache_hit:-0}, avg_latency_ms=${api_serper_avg_latency_ms:-0})
+- Hunter: ${api_hunter_count:-0} (calls=${api_hunter_calls:-0}, success=${api_hunter_success:-0}, error=${api_hunter_error:-0}, cache_hit=${api_hunter_cache_hit:-0}, avg_latency_ms=${api_hunter_avg_latency_ms:-0})
+
+Derived Efficiency:
+- API calls total: ${api_calls_total:-0}
+- API success rate: ${api_success_rate:-0}%
+- Cache hit rate: ${cache_hit_rate:-0}%
+- Emails/API call: ${emails_per_api_call:-0}
+- Est. Google billed incremental run cost (tiered): $${google_cost_estimated_run:-0}
+- Est. Google billed MTD cost (tiered): $${google_cost_estimated_mtd:-0}
+- Est. Google projected month-end billed cost: $${google_cost_estimated_monthly_projected:-0}
+- Emails per Google dollar: ${emails_per_google_dollar:-0}
 EOF
 )
 
@@ -449,12 +746,26 @@ Pairs Processed: $TOTAL
 Leads Generated: $lead_count
 Emails Sent: ${sent_count:-0}
 Replies Detected: ${reply_count:-0}
+Hard Bounces: ${hard_bounce_count:-0}
+Soft Bounces: ${soft_bounce_count:-0}
+Pending Queue End: ${pending_queue_size_end}
+
+Durations:
+- Run: ${RUN_DURATION_SEC}s
+- Discovery: ${DISCOVERY_DURATION_SEC}s
+- Enrichment: ${ENRICH_DURATION_SEC}s
+- Outreach: ${OUTREACH_DURATION_SEC}s
 
 $API_SUMMARY
+
+Alerts:
+$ALERTS_TEXT_RENDERED
 
 Log files:
 - Summary: $LOG_DIR/summary.log
 - Email: $LOG_DIR/email.log
+- KPI: $KPI_CSV
+- Metrics history: $RUN_HISTORY_CSV
 EOF
 )
 

@@ -88,6 +88,14 @@ GOOGLE_DISCOVERY_SEARCH_CALLS=4
 GOOGLE_DISCOVERY_TARGET_LEADS=12
 GOOGLE_DETAILS_FALLBACK_LIMIT=8
 LOG_ARCHIVE_RETENTION_DAYS=60
+API_SUCCESS_RATE_ALERT_THRESHOLD=90
+EFFICIENCY_MIN_EMAILS_PER_API_CALL=0.2
+
+# Google Places cost model controls (tiered estimator)
+GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000=35
+GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000=20
+# Set > 0 to trigger alert when projected month-end Google cost exceeds threshold
+GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD=150
 
 # Discovery provider (defaults to google_places when GOOGLE_PLACES_API_KEY exists)
 # DISCOVERY_PROVIDER=google_places
@@ -106,6 +114,8 @@ HUNTER_API_KEY=your_hunter_key
 ```
 
 Google discovery is now configured to use Places API (New) when `GOOGLE_PLACES_API_KEY` is present. `DISCOVERY_PROVIDER` can still be forced to `serper` if needed.
+
+Cost tracking note: the pipeline now records split Google usage (`Text Search` vs `Place Details`) and computes tiered billing estimates for run cost, month-to-date cost, and projected month-end cost in both `logs/daily_kpi.csv` and `logs/run_metrics/history.csv`.
 
 🧠 Tip: If you use 2-Factor Auth with Gmail, generate an App Password here: https://myaccount.google.com/apppasswords
 

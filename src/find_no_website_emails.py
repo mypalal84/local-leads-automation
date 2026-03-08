@@ -34,6 +34,30 @@ DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
+RUN_METRICS_TEMPLATE = {
+    "google_places": 0,
+    "serper": 0,
+    "hunter": 0,
+    "google_places_calls": 0,
+    "google_places_success": 0,
+    "google_places_error": 0,
+    "google_places_cache_hit": 0,
+    "google_places_latency_ms_sum": 0,
+    "google_places_latency_ms_count": 0,
+    "serper_calls": 0,
+    "serper_success": 0,
+    "serper_error": 0,
+    "serper_cache_hit": 0,
+    "serper_latency_ms_sum": 0,
+    "serper_latency_ms_count": 0,
+    "hunter_calls": 0,
+    "hunter_success": 0,
+    "hunter_error": 0,
+    "hunter_cache_hit": 0,
+    "hunter_latency_ms_sum": 0,
+    "hunter_latency_ms_count": 0,
+}
+
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ZBA‑LeadBot/1.1)"}
@@ -96,6 +120,9 @@ def cache_get(prefix: str, key: str):
         created = datetime.fromisoformat(payload.get("created_at", "1970-01-01T00:00:00"))
         if datetime.now() - created > timedelta(days=CACHE_TTL_DAYS):
             return None
+        provider = metric_provider_for_cache_prefix(prefix)
+        if provider:
+            increment_metric(f"{provider}_cache_hit")
         return payload.get("value")
     except Exception:
         return None
@@ -114,22 +141,73 @@ def cache_set(prefix: str, key: str, value):
         pass
 
 
-def increment_api_counter(counter_key: str):
+def load_run_metrics():
+    data = dict(RUN_METRICS_TEMPLATE)
+    if not RUN_METRICS_FILE or not os.path.isfile(RUN_METRICS_FILE):
+        return data
+    try:
+        with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        for key in data:
+            data[key] = int(loaded.get(key, 0) or 0)
+    except Exception:
+        pass
+    return data
+
+
+def save_run_metrics(data):
     if not RUN_METRICS_FILE:
         return
     try:
-        data = {"google_places": 0, "serper": 0, "hunter": 0}
-        if os.path.isfile(RUN_METRICS_FILE):
-            with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            for key in data:
-                data[key] = int(loaded.get(key, 0) or 0)
-        if counter_key in data:
-            data[counter_key] += 1
         with open(RUN_METRICS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
     except Exception:
         pass
+
+
+def increment_metric(metric_key: str, amount: int = 1):
+    if not RUN_METRICS_FILE:
+        return
+    try:
+        data = load_run_metrics()
+        if metric_key in data:
+            data[metric_key] += int(amount)
+            save_run_metrics(data)
+    except Exception:
+        pass
+
+
+def metric_provider_for_cache_prefix(prefix: str) -> str:
+    if (prefix or "").startswith("google_place") or prefix == "google_places":
+        return "google_places"
+    if prefix == "serper":
+        return "serper"
+    if prefix == "hunter":
+        return "hunter"
+    return ""
+
+
+def record_api_outcome(provider: str, success: bool, latency_ms: int):
+    if provider not in {"google_places", "serper", "hunter"}:
+        return
+    increment_metric(provider)
+    increment_metric(f"{provider}_calls")
+    increment_metric(f"{provider}_success" if success else f"{provider}_error")
+    increment_metric(f"{provider}_latency_ms_sum", max(0, int(latency_ms)))
+    increment_metric(f"{provider}_latency_ms_count")
+
+
+def run_tracked_api_call(provider: str, request_func):
+    started = time.perf_counter()
+    try:
+        result = request_func()
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        record_api_outcome(provider, success=True, latency_ms=latency_ms)
+        return result
+    except Exception:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        record_api_outcome(provider, success=False, latency_ms=latency_ms)
+        raise
 
 
 def prune_expired_cache():
@@ -186,14 +264,17 @@ def search_serper(query):
     if cached is not None:
         return cached
     def _call():
-        increment_api_counter("serper")
         payload = {"q": query, "num": 5}
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
-        r = requests.post("https://google.serper.dev/search",
-                          headers=headers, json=payload, timeout=25)
-        r.raise_for_status()
-        data = r.json().get("organic", [])
-        return [x.get("link") for x in data if x.get("link")]
+
+        def _request():
+            r = requests.post("https://google.serper.dev/search",
+                              headers=headers, json=payload, timeout=25)
+            r.raise_for_status()
+            data = r.json().get("organic", [])
+            return [x.get("link") for x in data if x.get("link")]
+
+        return run_tracked_api_call("serper", _request)
     result = retry_request(_call) or []
     cache_set("serper", query, result)
     return result
@@ -286,13 +367,16 @@ def hunter_email_lookup(domain):
     if cached is not None:
         return cached
     def _call():
-        increment_api_counter("hunter")
-        r = requests.get("https://api.hunter.io/v2/domain-search",
-                         params={"domain": domain, "api_key": HUNTER},
-                         timeout=15)
-        r.raise_for_status()
-        emails = r.json().get("data", {}).get("emails", [])
-        return [e.get("value") for e in emails if e.get("value")]
+
+        def _request():
+            r = requests.get("https://api.hunter.io/v2/domain-search",
+                             params={"domain": domain, "api_key": HUNTER},
+                             timeout=15)
+            r.raise_for_status()
+            emails = r.json().get("data", {}).get("emails", [])
+            return [e.get("value") for e in emails if e.get("value")]
+
+        return run_tracked_api_call("hunter", _request)
     result = retry_request(_call) or []
     cache_set("hunter", domain, result)
     return result

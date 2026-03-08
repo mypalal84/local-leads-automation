@@ -44,6 +44,42 @@ GOOGLE_DISCOVERY_TARGET_LEADS = int(os.getenv("GOOGLE_DISCOVERY_TARGET_LEADS", "
 GOOGLE_DETAILS_FALLBACK_LIMIT = int(os.getenv("GOOGLE_DETAILS_FALLBACK_LIMIT", "8"))
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
+RUN_METRICS_TEMPLATE = {
+    "google_places": 0,
+    "serper": 0,
+    "hunter": 0,
+    "google_places_calls": 0,
+    "google_places_success": 0,
+    "google_places_error": 0,
+    "google_places_cache_hit": 0,
+    "google_places_latency_ms_sum": 0,
+    "google_places_latency_ms_count": 0,
+    "google_places_text_search_calls": 0,
+    "google_places_text_search_success": 0,
+    "google_places_text_search_error": 0,
+    "google_places_text_search_cache_hit": 0,
+    "google_places_text_search_latency_ms_sum": 0,
+    "google_places_text_search_latency_ms_count": 0,
+    "google_places_details_calls": 0,
+    "google_places_details_success": 0,
+    "google_places_details_error": 0,
+    "google_places_details_cache_hit": 0,
+    "google_places_details_latency_ms_sum": 0,
+    "google_places_details_latency_ms_count": 0,
+    "serper_calls": 0,
+    "serper_success": 0,
+    "serper_error": 0,
+    "serper_cache_hit": 0,
+    "serper_latency_ms_sum": 0,
+    "serper_latency_ms_count": 0,
+    "hunter_calls": 0,
+    "hunter_success": 0,
+    "hunter_error": 0,
+    "hunter_cache_hit": 0,
+    "hunter_latency_ms_sum": 0,
+    "hunter_latency_ms_count": 0,
+}
+
 # ======================================================
 # AUTO‑ARCHIVE PREVIOUS DATA FILES
 # ======================================================
@@ -111,6 +147,12 @@ def cache_get(prefix: str, key: str):
         created = datetime.fromisoformat(payload.get("created_at", "1970-01-01T00:00:00"))
         if datetime.now() - created > timedelta(days=CACHE_TTL_DAYS):
             return None
+        provider = metric_provider_for_cache_prefix(prefix)
+        operation = metric_operation_for_cache_prefix(prefix)
+        if provider:
+            increment_metric(f"{provider}_cache_hit")
+            if operation:
+                increment_metric(f"{provider}_{operation}_cache_hit")
         return payload.get("value")
     except Exception:
         return None
@@ -129,22 +171,86 @@ def cache_set(prefix: str, key: str, value):
         pass
 
 
-def increment_api_counter(counter_key: str):
+def load_run_metrics():
+    data = dict(RUN_METRICS_TEMPLATE)
+    if not RUN_METRICS_FILE or not os.path.isfile(RUN_METRICS_FILE):
+        return data
+    try:
+        with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        for key in data:
+            data[key] = int(loaded.get(key, 0) or 0)
+    except Exception:
+        pass
+    return data
+
+
+def save_run_metrics(data):
     if not RUN_METRICS_FILE:
         return
     try:
-        data = {"google_places": 0, "serper": 0, "hunter": 0}
-        if os.path.isfile(RUN_METRICS_FILE):
-            with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            for key in data:
-                data[key] = int(loaded.get(key, 0) or 0)
-        if counter_key in data:
-            data[counter_key] += 1
         with open(RUN_METRICS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
     except Exception:
         pass
+
+
+def increment_metric(metric_key: str, amount: int = 1):
+    if not RUN_METRICS_FILE:
+        return
+    try:
+        data = load_run_metrics()
+        if metric_key in data:
+            data[metric_key] += int(amount)
+            save_run_metrics(data)
+    except Exception:
+        pass
+
+
+def metric_provider_for_cache_prefix(prefix: str) -> str:
+    if (prefix or "").startswith("google_place") or prefix == "google_places":
+        return "google_places"
+    if prefix == "serper":
+        return "serper"
+    if prefix == "hunter":
+        return "hunter"
+    return ""
+
+
+def metric_operation_for_cache_prefix(prefix: str) -> str:
+    if prefix == "google_places":
+        return "text_search"
+    if prefix == "google_place_details":
+        return "details"
+    return ""
+
+
+def record_api_outcome(provider: str, success: bool, latency_ms: int, operation: str = ""):
+    if provider not in {"google_places", "serper", "hunter"}:
+        return
+    increment_metric(provider)
+    increment_metric(f"{provider}_calls")
+    increment_metric(f"{provider}_success" if success else f"{provider}_error")
+    increment_metric(f"{provider}_latency_ms_sum", max(0, int(latency_ms)))
+    increment_metric(f"{provider}_latency_ms_count")
+    if operation:
+        increment_metric(f"{provider}_{operation}_calls")
+        increment_metric(f"{provider}_{operation}_success" if success else f"{provider}_{operation}_error")
+        increment_metric(f"{provider}_{operation}_latency_ms_sum", max(0, int(latency_ms)))
+        increment_metric(f"{provider}_{operation}_latency_ms_count")
+
+
+def run_tracked_api_call(provider: str, request_func, operation: str = ""):
+    started = time.perf_counter()
+    try:
+        result = request_func()
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        record_api_outcome(provider, success=True, latency_ms=latency_ms, operation=operation)
+        return result
+    except Exception:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        record_api_outcome(provider, success=False, latency_ms=latency_ms, operation=operation)
+        raise
 
 
 def prune_expired_cache():
@@ -202,15 +308,18 @@ def run_serper_search(query: str):
         return cached
     
     def _call():
-        increment_api_counter("serper")
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
         payload = {"q": query, "num": 10}
-        resp = requests.post(
-            "https://google.serper.dev/search",
-            headers=headers, json=payload, timeout=25
-        )
-        resp.raise_for_status()
-        return resp.json().get("organic", [])
+
+        def _request():
+            resp = requests.post(
+                "https://google.serper.dev/search",
+                headers=headers, json=payload, timeout=25
+            )
+            resp.raise_for_status()
+            return resp.json().get("organic", [])
+
+        return run_tracked_api_call("serper", _request)
     
     result = retry_request(_call) or []
     cache_set("serper", query, result)
@@ -232,7 +341,6 @@ def run_google_places_text_search(service: str, town: str):
     query = f"{service} in {town}"
 
     def _call_once(next_page_token: str = ""):
-        increment_api_counter("google_places")
         headers = {
             "X-Goog-Api-Key": GOOGLE_PLACES,
             "X-Goog-FieldMask": (
@@ -247,14 +355,18 @@ def run_google_places_text_search(service: str, town: str):
         }
         if next_page_token:
             payload["pageToken"] = next_page_token
-        resp = requests.post(
-            "https://places.googleapis.com/v1/places:searchText",
-            headers=headers,
-            json=payload,
-            timeout=20,
-        )
-        resp.raise_for_status()
-        return resp.json()
+
+        def _request():
+            resp = requests.post(
+                "https://places.googleapis.com/v1/places:searchText",
+                headers=headers,
+                json=payload,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        return run_tracked_api_call("google_places", _request, operation="text_search")
 
     all_results = []
     page_token = ""
@@ -288,18 +400,21 @@ def get_google_place_details(place_id: str):
         return cached
 
     def _call():
-        increment_api_counter("google_places")
         headers = {
             "X-Goog-Api-Key": GOOGLE_PLACES,
             "X-Goog-FieldMask": "id,name,displayName,formattedAddress,googleMapsUri,websiteUri",
         }
-        resp = requests.get(
-            f"https://places.googleapis.com/v1/{place_resource}",
-            headers=headers,
-            timeout=20,
-        )
-        resp.raise_for_status()
-        return resp.json()
+
+        def _request():
+            resp = requests.get(
+                f"https://places.googleapis.com/v1/{place_resource}",
+                headers=headers,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        return run_tracked_api_call("google_places", _request, operation="details")
 
     details = retry_request(_call) or {}
     cache_set("google_place_details", cache_key, details)
