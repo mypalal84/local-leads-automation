@@ -954,6 +954,39 @@ def test_should_skip_non_business_lead_for_directory_text_pattern():
     assert reason == "non_business_text_hint"
 
 
+@pytest.mark.parametrize(
+    "email_addr",
+    [
+        "alerts@facebook.com",
+        "notice@facebookmail.com",
+        "noreply@mail.instagram.com",
+        "updates@linkedin.com",
+        "notify@twitter.com",
+        "notify@x.com",
+        "msg@tiktok.com",
+        "msg@tiktokv.com",
+        "msg@pinterest.com",
+        "msg@snapchat.com",
+        "msg@youtube.com",
+        "msg@support.google.com",
+        "msg@reddit.com",
+        "msg@whatsapp.com",
+        "msg@discord.com",
+        "msg@telegram.org",
+    ],
+)
+def test_should_skip_non_business_lead_for_social_notification_domains(email_addr):
+    row = {
+        "name": "Potential Lead",
+        "link": "",
+        "notes": "",
+        "website": "",
+    }
+    skip, reason = sce.should_skip_non_business_lead(row, email_addr)
+    assert skip is True
+    assert reason in {"non_business_recipient_domain", "blocked_recipient_domain"}
+
+
 def test_should_skip_domain_mismatch_blocks_unrelated_recipient_domain():
     row = {
         "name": "Bay View Roofing, Inc.",

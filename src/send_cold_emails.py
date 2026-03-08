@@ -90,7 +90,10 @@ NON_BUSINESS_RECIPIENT_DOMAINS = {
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
     "zoominfo.com", "manta.com", "mapquest.com", "yellowpages.com",
     "consumeraffairs.com", "houzz.com", "showmelocal.com", "groups.io",
-    "instagram.com", "facebook.com", "tiktok.com", "youtube.com", "pinterest.com",
+    "instagram.com", "mail.instagram.com", "facebook.com", "facebookmail.com",
+    "linkedin.com", "twitter.com", "x.com", "tiktok.com", "tiktokv.com",
+    "pinterest.com", "snapchat.com", "youtube.com", "support.google.com",
+    "reddit.com", "whatsapp.com", "discord.com", "telegram.org",
 }
 NON_BUSINESS_SOURCE_DOMAINS = {
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
@@ -158,8 +161,11 @@ SOFT_BOUNCE_HINT_TOKENS = [
 MX_CACHE = {}
 
 DEFAULT_BLOCKED_RECIPIENT_DOMAINS = {
-    "groups.io", "showmelocal.com", "instagram.com", "facebook.com", "linkedin.com",
-    "tiktok.com", "youtube.com", "pinterest.com", "mapquest.com", "yellowpages.com",
+    "groups.io", "showmelocal.com", "instagram.com", "mail.instagram.com",
+    "facebook.com", "facebookmail.com", "linkedin.com", "twitter.com", "x.com",
+    "tiktok.com", "tiktokv.com", "youtube.com", "support.google.com", "pinterest.com",
+    "snapchat.com", "reddit.com", "whatsapp.com", "discord.com", "telegram.org",
+    "mapquest.com", "yellowpages.com",
     "yelp.com", "bbb.org", "angi.com", "thumbtack.com", "homeadvisor.com", "houzz.com",
     "zoominfo.com", "manta.com", "consumeraffairs.com",
 }

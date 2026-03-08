@@ -318,9 +318,35 @@ def test_filter_viable_emails_excludes_non_business_domains():
     filtered = enrich_mod.filter_viable_emails(
         [
             "bbooth@yelp.com",
+            "najiyakhan@instagram.com",
             "owner@acmefencing.com",
             "kmcnamara@nextdoor.com",
             "OWNER@acmefencing.com",
+        ]
+    )
+    assert filtered == ["owner@acmefencing.com"]
+
+
+def test_filter_viable_emails_excludes_full_social_notification_domain_list():
+    filtered = enrich_mod.filter_viable_emails(
+        [
+            "alerts@facebook.com",
+            "notice@facebookmail.com",
+            "noreply@mail.instagram.com",
+            "updates@linkedin.com",
+            "notify@twitter.com",
+            "notify@x.com",
+            "msg@tiktok.com",
+            "msg@tiktokv.com",
+            "msg@pinterest.com",
+            "msg@snapchat.com",
+            "msg@youtube.com",
+            "msg@support.google.com",
+            "msg@reddit.com",
+            "msg@whatsapp.com",
+            "msg@discord.com",
+            "msg@telegram.org",
+            "owner@acmefencing.com",
         ]
     )
     assert filtered == ["owner@acmefencing.com"]
@@ -395,7 +421,12 @@ def test_enrich_skips_non_business_email_domains(tmp_path, monkeypatch):
     monkeypatch.setattr(
         enrich_mod,
         "hunter_email_lookup",
-        lambda _domain: ["bbooth@yelp.com", "owner@localcleaner.com", "kmcnamara@nextdoor.com"],
+        lambda _domain: [
+            "bbooth@yelp.com",
+            "najiyakhan@instagram.com",
+            "owner@localcleaner.com",
+            "kmcnamara@nextdoor.com",
+        ],
     )
     monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
 
