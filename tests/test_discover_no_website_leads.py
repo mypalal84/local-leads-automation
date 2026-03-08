@@ -298,3 +298,88 @@ def test_discover_google_places_skips_business_with_website(tmp_path, monkeypatc
 
     out_path = module.discover("Roofers", "San Jose, CA")
     assert out_path is None
+
+
+def test_discover_google_places_skips_details_when_item_has_website(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-google-key")
+    monkeypatch.delenv("DISCOVERY_PROVIDER", raising=False)
+
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_google_places_text_search", lambda _s, _t: [
+        {
+            "name": "places/web123",
+            "id": "web123",
+            "displayName": {"text": "Website Already Present"},
+            "formattedAddress": "100 Main St, San Jose, CA",
+            "googleMapsUri": "https://maps.google.com/?cid=web123",
+            "websiteUri": "https://website-present.example",
+        }
+    ])
+
+    details_calls = {"count": 0}
+
+    def fake_details(_pid):
+        details_calls["count"] += 1
+        return {}
+
+    monkeypatch.setattr(module, "get_google_place_details", fake_details)
+
+    out_path = module.discover("Roofers", "San Jose, CA")
+    assert out_path is None
+    assert details_calls["count"] == 0
+
+
+def test_discover_google_places_respects_target_and_details_fallback_limit(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-google-key")
+    monkeypatch.setenv("GOOGLE_DISCOVERY_TARGET_LEADS", "2")
+    monkeypatch.setenv("GOOGLE_DETAILS_FALLBACK_LIMIT", "1")
+    monkeypatch.delenv("DISCOVERY_PROVIDER", raising=False)
+
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_google_places_text_search", lambda _s, _t: [
+        {
+            "name": "places/a1",
+            "id": "a1",
+            "displayName": {"text": "Lead One"},
+            "formattedAddress": "1 Main St, San Jose, CA",
+            "googleMapsUri": "https://maps.google.com/?cid=a1",
+        },
+        {
+            "name": "places/a2",
+            "id": "a2",
+            "displayName": {"text": "Lead Two"},
+            "formattedAddress": "2 Main St, San Jose, CA",
+            "googleMapsUri": "https://maps.google.com/?cid=a2",
+        },
+        {
+            "name": "places/a3",
+            "id": "a3",
+            "displayName": {"text": "Lead Three"},
+            "formattedAddress": "3 Main St, San Jose, CA",
+            "googleMapsUri": "https://maps.google.com/?cid=a3",
+        },
+    ])
+
+    details_calls = {"count": 0}
+
+    def fake_details(_pid):
+        details_calls["count"] += 1
+        return {"websiteUri": "", "formattedAddress": "fallback"}
+
+    monkeypatch.setattr(module, "get_google_place_details", fake_details)
+
+    out_path = module.discover("Roofers", "San Jose, CA")
+    assert out_path is not None
+    assert details_calls["count"] == 1
+
+    df = pd.read_csv(out_path)
+    assert len(df) == 2
+    assert sorted(df["name"].tolist()) == ["Lead One", "Lead Two"]

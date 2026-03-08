@@ -83,6 +83,8 @@ LEAD_SCORE_THRESHOLD=2
 PRE_ENRICH_SCORE_FILTER=true
 CACHE_TTL_DAYS=7
 GOOGLE_DISCOVERY_SEARCH_CALLS=4
+GOOGLE_DISCOVERY_TARGET_LEADS=12
+GOOGLE_DETAILS_FALLBACK_LIMIT=8
 
 # Discovery provider (defaults to google_places when GOOGLE_PLACES_API_KEY exists)
 # DISCOVERY_PROVIDER=google_places
@@ -265,6 +267,8 @@ Total replied addresses: 2
 - You can explicitly set `DISCOVERY_PROVIDER=serper` or `DISCOVERY_PROVIDER=google_places`.
 - Google Places discovery uses Places API (New) Text Search + place details and skips businesses with a discovered `websiteUri`.
 - `GOOGLE_DISCOVERY_SEARCH_CALLS` controls how many paginated Places Text Search calls are made per city/service pair.
+- `GOOGLE_DISCOVERY_TARGET_LEADS` stops per-pair discovery once enough no-website leads are collected.
+- `GOOGLE_DETAILS_FALLBACK_LIMIT` caps extra Place Details lookups when Text Search rows omit `websiteUri`.
 - Discovery cache keys include versioning and API-key fingerprinting to avoid stale cross-key false hits.
 
 ### How to switch providers (quick reference)
@@ -285,6 +289,8 @@ Persistent default in `.env`:
 # Force Google Places (New)
 DISCOVERY_PROVIDER=google_places
 GOOGLE_DISCOVERY_SEARCH_CALLS=4
+GOOGLE_DISCOVERY_TARGET_LEADS=12
+GOOGLE_DETAILS_FALLBACK_LIMIT=8
 
 # OR force Serper
 # DISCOVERY_PROVIDER=serper

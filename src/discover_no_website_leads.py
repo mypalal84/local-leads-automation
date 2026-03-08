@@ -40,6 +40,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
 GOOGLE_DISCOVERY_SEARCH_CALLS = int(os.getenv("GOOGLE_DISCOVERY_SEARCH_CALLS", "2"))
+GOOGLE_DISCOVERY_TARGET_LEADS = int(os.getenv("GOOGLE_DISCOVERY_TARGET_LEADS", "12"))
+GOOGLE_DETAILS_FALLBACK_LIMIT = int(os.getenv("GOOGLE_DETAILS_FALLBACK_LIMIT", "8"))
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
 # ======================================================
@@ -416,20 +418,35 @@ def discover(service: str, town: str):
             return None
 
         leads = []
+        details_fallback_count = 0
+        target_leads = max(1, GOOGLE_DISCOVERY_TARGET_LEADS)
+        details_fallback_limit = max(0, GOOGLE_DETAILS_FALLBACK_LIMIT)
+
         for item in results:
             if provider == "google_places":
                 display_name = item.get("displayName") or {}
                 title = (display_name.get("text") or item.get("name") or "").strip()
                 place_id = (item.get("name") or item.get("id") or "").strip()
-                details = get_google_place_details(place_id)
-                website = (details.get("websiteUri") or item.get("websiteUri") or "").strip()
+                details = {}
+                website = (item.get("websiteUri") or "").strip()
+                maps_link = (item.get("googleMapsUri") or "").strip()
+                snippet = (item.get("formattedAddress") or "").strip()
+
+                should_fetch_details = (
+                    not website and place_id and details_fallback_count < details_fallback_limit
+                )
+                if should_fetch_details:
+                    details = get_google_place_details(place_id)
+                    details_fallback_count += 1
+
+                website = (website or details.get("websiteUri") or "").strip()
                 maps_link = (
-                    details.get("googleMapsUri")
-                    or item.get("googleMapsUri")
+                    maps_link
+                    or details.get("googleMapsUri")
                     or ""
                 ).strip()
                 snippet = (
-                    item.get("formattedAddress")
+                    snippet
                     or details.get("formattedAddress")
                     or ""
                 ).strip()
@@ -468,6 +485,12 @@ def discover(service: str, town: str):
                 "email": "",
                 "notes": snippet[:200]
             })
+
+            if provider == "google_places" and len(leads) >= target_leads:
+                if DEBUG:
+                    print(f"[STOP] Reached target leads ({target_leads}) for {service} | {town}")
+                break
+
             time.sleep(0.5)
 
         if not leads:
