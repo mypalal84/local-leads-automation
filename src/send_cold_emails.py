@@ -70,6 +70,7 @@ BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower
 ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "true").strip().lower() in {"1", "true", "yes", "on"}
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 SKIP_REPLY_CHECK_CLEANUP = os.getenv("SKIP_REPLY_CHECK_CLEANUP", "false").strip().lower() in {"1", "true", "yes", "on"}
+HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD = max(0, int(os.getenv("HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD", "0")))
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If this isn't relevant, reply STOP and I'll remove you from future emails.",
@@ -307,6 +308,30 @@ def append_to_suppressions(email_addr, reason="manual"):
         return
     with open(SUPPRESSIONS_FILE, "a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([email_addr, reason, datetime.now().isoformat(timespec="seconds")])
+
+
+def load_hard_bounce_domain_blocklist(threshold):
+    threshold = max(0, int(threshold or 0))
+    if threshold <= 0 or not os.path.exists(SUPPRESSIONS_FILE):
+        return set()
+
+    counts = {}
+    with open(SUPPRESSIONS_FILE, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if len(row) < 2:
+                continue
+            suppressed_email = (row[0] or "").strip().lower()
+            reason = (row[1] or "").strip().lower()
+            if reason != "delivery_failure_hard":
+                continue
+            if "@" not in suppressed_email:
+                continue
+            domain = suppressed_email.split("@", 1)[1].strip().lower()
+            if not domain:
+                continue
+            counts[domain] = counts.get(domain, 0) + 1
+
+    return {domain for domain, count in counts.items() if count >= threshold}
 
 def extract_email_address(from_field):
     m = re.search(r"<([^>]+)>", from_field or "")
@@ -939,6 +964,7 @@ def build_email_body(business, town, service, contact_name="there", notes=""):
 def send_cold_emails(csv_file=None):
     sent = load_sent_log()
     suppressed = load_suppression_list()
+    hard_bounce_blocked_domains = load_hard_bounce_domain_blocklist(HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD)
     pending_rows = load_pending_rows()
     already_sent_today = load_daily_sent_count()
     domain_send_counts = load_daily_domain_counts()
@@ -968,6 +994,11 @@ def send_cold_emails(csv_file=None):
     print(f"[INFO] Domain cap: {MAX_EMAILS_PER_DOMAIN} | Block generic inboxes: {BLOCK_GENERIC_INBOXES}")
     if pending_rows:
         print(f"[INFO] Pending queue available: {len(pending_rows)} leads")
+    if hard_bounce_blocked_domains:
+        print(
+            f"[INFO] Hard-bounce domain blocklist active: {len(hard_bounce_blocked_domains)} "
+            f"domain(s), threshold={HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD}"
+        )
     if DRY_RUN:
         print("[INFO] Sender DRY_RUN enabled: previewing emails without SMTP send.")
 
@@ -1005,6 +1036,12 @@ def send_cold_emails(csv_file=None):
         for row in combined_rows:
             email_field = (row.get("emails", "") or "").split(",")[0].strip().lower()
             row_town, row_service_ctx = resolve_row_context(row, town, service)
+            domain = email_field.split("@", 1)[1] if "@" in email_field else ""
+
+            if domain and domain in hard_bounce_blocked_domains:
+                print(f"[SUPPRESS-DOMAIN] Skipping {email_field} (domain hard-bounce threshold reached)")
+                continue
+
             if not email_field or email_field in sent or email_field in suppressed:
                 if email_field in suppressed:
                     print(f"[SUPPRESS] Skipping suppressed address: {email_field}")
@@ -1029,7 +1066,6 @@ def send_cold_emails(csv_file=None):
                     print(f"[VALIDATION] Skipping {email_field} ({reason})")
                     continue
 
-            domain = email_field.split("@")[-1]
             if MAX_EMAILS_PER_DOMAIN > 0 and domain_send_counts.get(domain, 0) >= MAX_EMAILS_PER_DOMAIN:
                 print(f"[DOMAIN-CAP] Deferring {email_field} (domain {domain} cap reached)")
                 if not DRY_RUN:
