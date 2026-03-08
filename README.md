@@ -30,13 +30,15 @@ Daily_Leads/
 │   ├── summary.log              # Lead generation logs (per city/service)
 │   ├── email.log                # Sent emails + detected replies
 │   ├── daily_kpi.csv            # Daily KPI snapshots per pipeline run
-│   ├── run_metrics_<timestamp>.json # Per-run API call counters
+│   ├── run_metrics/             # Per-run API call counters
+│   │   └── run_metrics_<timestamp>.json
 │   ├── pipeline.log             # Master cron execution log
 │   └── .pairs.tmp               # Auto‑generated, then removed
 │
 ├── data/                        # Lead and contact data
 │   ├── leads_<city>_<service>_NO_WEBSITE_<date>.csv
-│   ├── daily_sent_<date>.csv    # Running sent count used for daily cap
+│   ├── daily_sent/              # Daily send ledgers grouped by date
+│   │   └── daily_sent_<date>.csv
 │   ├── sent_log.csv             # Prevent re‑sending to same address
 │   ├── replies.csv              # Stores detected replies
 │   ├── suppressions.csv         # Never-send list (manual + auto-suppressed)
@@ -85,6 +87,7 @@ CACHE_TTL_DAYS=7
 GOOGLE_DISCOVERY_SEARCH_CALLS=4
 GOOGLE_DISCOVERY_TARGET_LEADS=12
 GOOGLE_DETAILS_FALLBACK_LIMIT=8
+LOG_ARCHIVE_RETENTION_DAYS=60
 
 # Discovery provider (defaults to google_places when GOOGLE_PLACES_API_KEY exists)
 # DISCOVERY_PROVIDER=google_places
@@ -251,15 +254,22 @@ Total replied addresses: 2
 | File / Folder | Description |
 | --- | --- |
 | `data/leads_<city>_<service>_NO_WEBSITE_<date>.csv` | Discovery/enrichment output used by outreach |
-| `data/daily_sent_<date>.csv` | Daily send ledger used to enforce email caps |
+| `data/daily_sent/daily_sent_<date>.csv` | Daily send ledger used to enforce email caps |
 | `data/sent_log.csv` | Rolling record of all recipients already emailed |
 | `data/replies.csv` | Archived reply summaries (sender, subject, snippet, date) |
 | `data/suppressions.csv` | Suppressed addresses (manual and auto from negative replies) |
 | `data/pending_leads.csv` | Deferred leads to retry next run (always present; only deferred/retryable rows retained) |
 | `data/cache/` | Cached API responses used to reduce repeat Google Places/Serper/Hunter calls |
 | `logs/daily_kpi.csv` | Run-by-run KPIs: pairs, sent, replies, quota remaining |
-| `logs/run_metrics_<timestamp>.json` | Per-run API counters used in summary email |
+| `logs/run_metrics/run_metrics_<timestamp>.json` | Per-run API counters used in summary email |
+| `logs/archive/<timestamp>/run_metrics_*.json` | Archived run metrics moved out of the live logs root each new run |
 | `logs/` | Process and cron output logs |
+
+Archive retention notes:
+
+- `LOG_ARCHIVE_RETENTION_DAYS` controls cleanup of old `logs/archive/*` folders.
+- Default is `60` days if unset or invalid.
+- Set `0` to disable automatic pruning.
 
 ## 🗺 Discovery Provider Behavior
 

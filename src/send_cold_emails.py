@@ -35,6 +35,7 @@ IMAP_SERVER = "imap.gmail.com"
 
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
+DAILY_SENT_DIR = os.path.join(DATA_DIR, "daily_sent")
 SENT_LOG = os.path.join(DATA_DIR, "sent_log.csv")
 REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
 SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
@@ -53,7 +54,9 @@ UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If this isn't relevant, reply STOP and I'll remove you from future emails.",
 )
-DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{datetime.now().strftime('%Y-%m-%d')}.csv")
+TODAY_STAMP = datetime.now().strftime('%Y-%m-%d')
+DAILY_SENT_LOG = os.path.join(DAILY_SENT_DIR, f"daily_sent_{TODAY_STAMP}.csv")
+LEGACY_DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{TODAY_STAMP}.csv")
 NEGATIVE_REPLY_KEYWORDS = [
     "unsubscribe", "stop", "remove", "do not contact", "don't contact",
     "not interested", "no thanks", "no thank you", "wrong email", "spam"
@@ -131,6 +134,8 @@ SOFT_BOUNCE_HINT_TOKENS = [
     "temporarily", "try again later", "deferred", "greylist", "rate limit"
 ]
 MX_CACHE = {}
+
+os.makedirs(DAILY_SENT_DIR, exist_ok=True)
 
 # --------------------------------------------------
 # Message templates
@@ -256,10 +261,11 @@ def extract_email_address(from_field):
     return m2.group(0).strip().lower() if m2 else ""
 
 def load_daily_sent_count():
-    if not os.path.exists(DAILY_SENT_LOG):
+    active_log = DAILY_SENT_LOG if os.path.exists(DAILY_SENT_LOG) else LEGACY_DAILY_SENT_LOG
+    if not os.path.exists(active_log):
         return 0
     try:
-        with open(DAILY_SENT_LOG, newline="") as f:
+        with open(active_log, newline="") as f:
             return sum(1 for _ in csv.reader(f))
     except Exception:
         return 0
@@ -267,10 +273,11 @@ def load_daily_sent_count():
 
 def load_daily_domain_counts():
     counts = {}
-    if not os.path.exists(DAILY_SENT_LOG):
+    active_log = DAILY_SENT_LOG if os.path.exists(DAILY_SENT_LOG) else LEGACY_DAILY_SENT_LOG
+    if not os.path.exists(active_log):
         return counts
     try:
-        with open(DAILY_SENT_LOG, newline="", encoding="utf-8") as f:
+        with open(active_log, newline="", encoding="utf-8") as f:
             for row in csv.reader(f):
                 if not row:
                     continue

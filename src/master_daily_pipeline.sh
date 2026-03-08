@@ -95,6 +95,7 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${EXPECTED_SENDS_PER_PAIR:=5}"
 : "${MAX_PAIRS_PER_RUN:=15}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
+: "${LOG_ARCHIVE_RETENTION_DAYS:=60}"
 : "${DRY_RUN:=false}"
 
 DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
@@ -107,10 +108,77 @@ else
 fi
 shopt -u nocasematch
 
-mkdir -p "$LOG_DIR" "$DATA_DIR"
+RUN_METRICS_DIR="$LOG_DIR/run_metrics"
+mkdir -p "$LOG_DIR" "$DATA_DIR" "$RUN_METRICS_DIR"
+
+archive_run_metrics_files() {
+  local archive_stamp="$1"
+  local archive_session_dir="$LOG_DIR/archive/$archive_stamp"
+  local moved=0
+
+  shopt -s nullglob
+  local metrics_files=(
+    "$RUN_METRICS_DIR"/run_metrics_*.json
+    "$LOG_DIR"/run_metrics_*.json
+  )
+  shopt -u nullglob
+
+  if (( ${#metrics_files[@]} == 0 )); then
+    return
+  fi
+
+  mkdir -p "$archive_session_dir"
+
+  for metrics_path in "${metrics_files[@]}"; do
+    if mv "$metrics_path" "$archive_session_dir/" 2>/dev/null; then
+      ((moved++))
+    fi
+  done
+
+  if (( moved > 0 )); then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ARCHIVE] Moved $moved run_metrics file(s) -> $archive_session_dir"
+  fi
+}
+
+prune_old_metrics_archives() {
+  local retention_days="$LOG_ARCHIVE_RETENTION_DAYS"
+  local archive_root="$LOG_DIR/archive"
+
+  if ! [[ "$retention_days" =~ ^[0-9]+$ ]]; then
+    retention_days=60
+  fi
+  if (( retention_days <= 0 )); then
+    return
+  fi
+  if [[ ! -d "$archive_root" ]]; then
+    return
+  fi
+
+  local old_dirs=()
+  while IFS= read -r dir; do
+    old_dirs+=("$dir")
+  done < <(find "$archive_root" -mindepth 1 -maxdepth 1 -type d -mtime +"$retention_days" 2>/dev/null)
+
+  if (( ${#old_dirs[@]} == 0 )); then
+    return
+  fi
+
+  local removed=0
+  for dir in "${old_dirs[@]}"; do
+    if rm -rf "$dir"; then
+      ((removed++))
+    fi
+  done
+
+  if (( removed > 0 )); then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ARCHIVE] Pruned $removed archive folder(s) older than ${retention_days} day(s)."
+  fi
+}
 
 RUN_ID="$(date '+%Y-%m-%d_%H-%M-%S')"
-RUN_METRICS_FILE="$LOG_DIR/run_metrics_${RUN_ID}.json"
+archive_run_metrics_files "$RUN_ID"
+prune_old_metrics_archives
+RUN_METRICS_FILE="$RUN_METRICS_DIR/run_metrics_${RUN_ID}.json"
 export PIPELINE_RUN_METRICS_FILE="$RUN_METRICS_FILE"
 
 cat > "$RUN_METRICS_FILE" <<EOF
@@ -124,7 +192,15 @@ sanitize_for_filename() {
 }
 
 today_sent_count() {
-  local daily_file="$DATA_DIR/daily_sent_$(date +%Y-%m-%d).csv"
+  local stamp
+  stamp="$(date +%Y-%m-%d)"
+  local daily_file="$DATA_DIR/daily_sent/daily_sent_${stamp}.csv"
+  local legacy_daily_file="$DATA_DIR/daily_sent_${stamp}.csv"
+
+  if [[ ! -f "$daily_file" && -f "$legacy_daily_file" ]]; then
+    daily_file="$legacy_daily_file"
+  fi
+
   if [[ -f "$daily_file" ]]; then
     wc -l < "$daily_file" | awk '{print $1}'
   else
