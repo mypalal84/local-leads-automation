@@ -40,6 +40,7 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
     env["DRY_RUN"] = "true"
     env["PIPELINE_DELAY_BETWEEN_RUNS"] = "0"
     env["DAILY_EMAIL_TARGET"] = "50"
+    env["EXPECTED_SENDS_PER_PAIR"] = "5"
 
     subprocess.run([str(target_script)], check=True, env=env)
 
@@ -48,11 +49,11 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
 
     rows = kpi_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(rows) >= 2
-    assert rows[0].startswith("date,timestamp,dry_run")
+    assert rows[0].startswith("date,timestamp,run_id,dry_run")
     assert ",true," in rows[-1]
 
     fields = rows[-1].split(",")
-    pairs_selected = int(fields[3].strip())
+    pairs_selected = int(fields[4].strip())
     # target=50 and default expected sends per pair=5 -> 10 selected pairs
     assert pairs_selected == 10
 
@@ -95,6 +96,8 @@ def test_master_pipeline_respects_env_daily_target_for_pair_selection(tmp_path):
     env["HOME"] = str(home)
     env["DRY_RUN"] = "true"
     env["PIPELINE_DELAY_BETWEEN_RUNS"] = "0"
+    env["DAILY_EMAIL_TARGET"] = "7"
+    env["EXPECTED_SENDS_PER_PAIR"] = "5"
 
     subprocess.run([str(target_script)], check=True, env=env)
 
@@ -102,8 +105,8 @@ def test_master_pipeline_respects_env_daily_target_for_pair_selection(tmp_path):
     assert kpi_path.exists()
     rows = kpi_path.read_text(encoding="utf-8").strip().splitlines()
     fields = rows[-1].split(",")
-    pairs_selected = int(fields[3].strip())
-    daily_target = int(fields[5].strip())
+    pairs_selected = int(fields[4].strip())
+    daily_target = int(fields[6].strip())
 
     assert daily_target == 7
     assert pairs_selected == 2

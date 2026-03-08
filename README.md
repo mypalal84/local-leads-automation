@@ -83,6 +83,15 @@ EXPECTED_SENDS_PER_PAIR=5
 MAX_PAIRS_PER_RUN=15
 LEAD_SCORE_THRESHOLD=2
 PRE_ENRICH_SCORE_FILTER=true
+STARTUP_PRIORITY=false
+STARTUP_SCORE_BOOST=2
+# Prefer age-based startup targeting (not tech-industry targeting)
+STARTUP_MAX_AGE_YEARS=5
+STARTUP_EXCLUDE_TECH=true
+# Optional startup hints (comma-separated)
+# STARTUP_HINT_KEYWORDS=founded,established,since,newly opened,recently opened,just launched,new business,new company
+# Optional exclusion keywords when STARTUP_EXCLUDE_TECH=true
+# STARTUP_TECH_EXCLUDE_KEYWORDS=saas,software,app,platform,ai,ml,machine learning,cloud,devops,fintech,edtech,martech
 CACHE_TTL_DAYS=7
 CACHE_MAX_MB=256
 GOOGLE_DISCOVERY_SEARCH_CALLS=4
@@ -121,7 +130,7 @@ Google discovery is now configured to use Places API (New) when `GOOGLE_PLACES_A
 
 Cost tracking note: the pipeline now records split Google usage (`Text Search` vs `Place Details`) and computes tiered billing estimates for run cost, month-to-date cost, and projected month-end cost in both `logs/daily_kpi.csv` and `logs/run_metrics/history.csv`.
 
-🧠 Tip: If you use 2-Factor Auth with Gmail, generate an App Password here: https://myaccount.google.com/apppasswords
+🧠 Tip: If you use 2-Factor Auth with Gmail, generate an App Password here: <https://myaccount.google.com/apppasswords>
 
 ## 📆 Automated Daily Schedule 🕒
 
@@ -260,7 +269,7 @@ Total replied addresses: 2
 | --- | --- |
 | `discover_no_website_leads.py` | 🔎 Finds likely no-website leads via Google Places API (New) by default (Serper fallback) and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
 | `find_no_website_emails.py` | 🔍 Enriches discovery output, re-checks live websites, and verifies contact emails via Serper and Hunter APIs. |
-| `send_cold_emails.py` | ✉️ Sends cold emails with pending-first queue processing, deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
+| `send_cold_emails.py` | ✉️ Sends cold emails with score-prioritized queue processing (highest `lead_score` first), deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
 | `daily_summary_report.py` | 📊 Generates a daily overview of lead counts and campaign performance. |
 
 ## 🗃 Data Outputs 📑
@@ -268,11 +277,11 @@ Total replied addresses: 2
 | File / Folder | Description |
 | --- | --- |
 | `data/leads_<city>_<service>_NO_WEBSITE_<date>.csv` | Discovery/enrichment output used by outreach |
-| `data/daily_sent/daily_sent_<date>.csv` | Daily send ledger used to enforce email caps |
-| `data/sent_log.csv` | Rolling record of all recipients already emailed |
+| `data/daily_sent/daily_sent_<date>.csv` | Daily send ledger used to enforce email caps (email, lead_score, timestamp, source file) |
+| `data/sent_log.csv` | Rolling record of all recipients already emailed (email, lead_score, timestamp, source file) |
 | `data/replies.csv` | Archived reply summaries (sender, subject, snippet, date) |
 | `data/suppressions.csv` | Suppressed addresses (manual and auto from negative replies) |
-| `data/pending_leads.csv` | Deferred leads to retry next run (always present; only deferred/retryable rows retained) |
+| `data/pending_leads.csv` | Deferred leads to retry next run (always present; includes `lead_score` for prioritization) |
 | `data/cache/` | Cached API responses used to reduce repeat Google Places/Serper/Hunter calls |
 | `logs/daily_kpi.csv` | Run-by-run KPIs: pairs, sent, replies, quota remaining |
 | `logs/run_metrics/run_metrics_<timestamp>.json` | Per-run API counters used in summary email |
@@ -414,4 +423,3 @@ MAX_PAIRS_PER_RUN=10
 ---
 
 ❤️ Built by Alex Cahn / ZBA Digital — streamlining local lead generation through automation.
-

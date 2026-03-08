@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 # ======================================================
 # ENVIRONMENT SETUP
 # ======================================================
-load_dotenv(override=True)
+load_dotenv(override=False)
 SERPER = os.getenv("SERPER_API_KEY")
 GOOGLE_PLACES = os.getenv("GOOGLE_PLACES_API_KEY")
 DEFAULT_DISCOVERY_PROVIDER = "google_places" if GOOGLE_PLACES else "serper"
@@ -206,6 +206,11 @@ def increment_metric(metric_key: str, amount: int = 1):
             save_run_metrics(data)
     except Exception:
         pass
+
+
+def increment_api_counter(provider: str):
+    """Backward-compatible shim for legacy tests/callers."""
+    increment_metric(provider)
 
 
 def metric_provider_for_cache_prefix(prefix: str) -> str:

@@ -58,18 +58,18 @@ ORIG_PRE_SEND_VALIDATE_EMAILS=""
 ORIG_CACHE_TTL_DAYS=""
 ORIG_PRE_ENRICH_SCORE_FILTER=""
 
-if [[ -v DAILY_EMAIL_TARGET ]]; then OVERRIDE_DAILY_EMAIL_TARGET="1"; ORIG_DAILY_EMAIL_TARGET="$DAILY_EMAIL_TARGET"; fi
-if [[ -v ENRICH_BUFFER_MULTIPLIER ]]; then OVERRIDE_ENRICH_BUFFER_MULTIPLIER="1"; ORIG_ENRICH_BUFFER_MULTIPLIER="$ENRICH_BUFFER_MULTIPLIER"; fi
-if [[ -v EXPECTED_SENDS_PER_PAIR ]]; then OVERRIDE_EXPECTED_SENDS_PER_PAIR="1"; ORIG_EXPECTED_SENDS_PER_PAIR="$EXPECTED_SENDS_PER_PAIR"; fi
-if [[ -v MAX_PAIRS_PER_RUN ]]; then OVERRIDE_MAX_PAIRS_PER_RUN="1"; ORIG_MAX_PAIRS_PER_RUN="$MAX_PAIRS_PER_RUN"; fi
-if [[ -v PIPELINE_DELAY_BETWEEN_RUNS ]]; then OVERRIDE_PIPELINE_DELAY_BETWEEN_RUNS="1"; ORIG_PIPELINE_DELAY_BETWEEN_RUNS="$PIPELINE_DELAY_BETWEEN_RUNS"; fi
-if [[ -v DRY_RUN ]]; then OVERRIDE_DRY_RUN="1"; ORIG_DRY_RUN="$DRY_RUN"; fi
-if [[ -v LEAD_SCORE_THRESHOLD ]]; then OVERRIDE_LEAD_SCORE_THRESHOLD="1"; ORIG_LEAD_SCORE_THRESHOLD="$LEAD_SCORE_THRESHOLD"; fi
-if [[ -v MAX_EMAILS_PER_DOMAIN ]]; then OVERRIDE_MAX_EMAILS_PER_DOMAIN="1"; ORIG_MAX_EMAILS_PER_DOMAIN="$MAX_EMAILS_PER_DOMAIN"; fi
-if [[ -v BLOCK_GENERIC_INBOXES ]]; then OVERRIDE_BLOCK_GENERIC_INBOXES="1"; ORIG_BLOCK_GENERIC_INBOXES="$BLOCK_GENERIC_INBOXES"; fi
-if [[ -v PRE_SEND_VALIDATE_EMAILS ]]; then OVERRIDE_PRE_SEND_VALIDATE_EMAILS="1"; ORIG_PRE_SEND_VALIDATE_EMAILS="$PRE_SEND_VALIDATE_EMAILS"; fi
-if [[ -v CACHE_TTL_DAYS ]]; then OVERRIDE_CACHE_TTL_DAYS="1"; ORIG_CACHE_TTL_DAYS="$CACHE_TTL_DAYS"; fi
-if [[ -v PRE_ENRICH_SCORE_FILTER ]]; then OVERRIDE_PRE_ENRICH_SCORE_FILTER="1"; ORIG_PRE_ENRICH_SCORE_FILTER="$PRE_ENRICH_SCORE_FILTER"; fi
+if [[ ${DAILY_EMAIL_TARGET+x} ]]; then OVERRIDE_DAILY_EMAIL_TARGET="1"; ORIG_DAILY_EMAIL_TARGET="$DAILY_EMAIL_TARGET"; fi
+if [[ ${ENRICH_BUFFER_MULTIPLIER+x} ]]; then OVERRIDE_ENRICH_BUFFER_MULTIPLIER="1"; ORIG_ENRICH_BUFFER_MULTIPLIER="$ENRICH_BUFFER_MULTIPLIER"; fi
+if [[ ${EXPECTED_SENDS_PER_PAIR+x} ]]; then OVERRIDE_EXPECTED_SENDS_PER_PAIR="1"; ORIG_EXPECTED_SENDS_PER_PAIR="$EXPECTED_SENDS_PER_PAIR"; fi
+if [[ ${MAX_PAIRS_PER_RUN+x} ]]; then OVERRIDE_MAX_PAIRS_PER_RUN="1"; ORIG_MAX_PAIRS_PER_RUN="$MAX_PAIRS_PER_RUN"; fi
+if [[ ${PIPELINE_DELAY_BETWEEN_RUNS+x} ]]; then OVERRIDE_PIPELINE_DELAY_BETWEEN_RUNS="1"; ORIG_PIPELINE_DELAY_BETWEEN_RUNS="$PIPELINE_DELAY_BETWEEN_RUNS"; fi
+if [[ ${DRY_RUN+x} ]]; then OVERRIDE_DRY_RUN="1"; ORIG_DRY_RUN="$DRY_RUN"; fi
+if [[ ${LEAD_SCORE_THRESHOLD+x} ]]; then OVERRIDE_LEAD_SCORE_THRESHOLD="1"; ORIG_LEAD_SCORE_THRESHOLD="$LEAD_SCORE_THRESHOLD"; fi
+if [[ ${MAX_EMAILS_PER_DOMAIN+x} ]]; then OVERRIDE_MAX_EMAILS_PER_DOMAIN="1"; ORIG_MAX_EMAILS_PER_DOMAIN="$MAX_EMAILS_PER_DOMAIN"; fi
+if [[ ${BLOCK_GENERIC_INBOXES+x} ]]; then OVERRIDE_BLOCK_GENERIC_INBOXES="1"; ORIG_BLOCK_GENERIC_INBOXES="$BLOCK_GENERIC_INBOXES"; fi
+if [[ ${PRE_SEND_VALIDATE_EMAILS+x} ]]; then OVERRIDE_PRE_SEND_VALIDATE_EMAILS="1"; ORIG_PRE_SEND_VALIDATE_EMAILS="$PRE_SEND_VALIDATE_EMAILS"; fi
+if [[ ${CACHE_TTL_DAYS+x} ]]; then OVERRIDE_CACHE_TTL_DAYS="1"; ORIG_CACHE_TTL_DAYS="$CACHE_TTL_DAYS"; fi
+if [[ ${PRE_ENRICH_SCORE_FILTER+x} ]]; then OVERRIDE_PRE_ENRICH_SCORE_FILTER="1"; ORIG_PRE_ENRICH_SCORE_FILTER="$PRE_ENRICH_SCORE_FILTER"; fi
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
@@ -314,29 +314,55 @@ SERVICES=(
 
 # Cities --------------------------------------------------------------
 CITIES=(
-"Seattle, WA" "Spokane, WA" "Tacoma, WA" "Portland, OR" "Eugene, OR"
-"Salem, OR" "Boise, ID" "Denver, CO" "Colorado Springs, CO" "Phoenix, AZ"
-"Mesa, AZ" "Tucson, AZ" "Las Vegas, NV" "Reno, NV" "Salt Lake City, UT"
-"Albuquerque, NM" "Dallas, TX" "Fort Worth, TX" "Austin, TX"
-"San Antonio, TX" "Houston, TX" "El Paso, TX" "Oklahoma City, OK"
-"Tulsa, OK" "Kansas City, MO" "St. Louis, MO" "Omaha, NE" "Wichita, KS"
-"Minneapolis, MN" "St. Paul, MN" "Des Moines, IA" "Chicago, IL"
-"Indianapolis, IN" "Columbus, OH" "Cleveland, OH" "Cincinnati, OH"
-"Detroit, MI" "Grand Rapids, MI" "Milwaukee, WI" "Nashville, TN"
-"Memphis, TN" "Louisville, KY" "Birmingham, AL" "Atlanta, GA"
-"Savannah, GA" "Charlotte, NC" "Raleigh, NC" "Greensboro, NC"
-"Charleston, SC" "Columbia, SC" "Jacksonville, FL" "Orlando, FL"
-"Tampa, FL" "St. Petersburg, FL" "Miami, FL" "Fort Lauderdale, FL"
-"New Orleans, LA" "Little Rock, AR" "Jackson, MS" "Richmond, VA"
-"Virginia Beach, VA" "Washington, DC" "Baltimore, MD" "Philadelphia, PA"
-"Pittsburgh, PA" "Buffalo, NY" "Rochester, NY" "Albany, NY" "Newark, NJ"
-"Jersey City, NJ" "Hartford, CT" "New Haven, CT" "Providence, RI"
-"Boston, MA" "Springfield, MA" "Manchester, NH" "Portland, ME"
-"Los Angeles, CA" "San Diego, CA" "San Jose, CA" "Sacramento, CA"
-"Fresno, CA" "Bakersfield, CA" "Riverside, CA" "San Bernardino, CA"
-"Oakland, CA" "Long Beach, CA" "Anaheim, CA" "Santa Ana, CA"
-"Irvine, CA" "Chula Vista, CA" "Stockton, CA" "Modesto, CA"
-"Corpus Christi, TX" "Chandler, AZ" "Scottsdale, AZ"
+"Birmingham, AL" "Montgomery, AL" "Mobile, AL"
+"Chandler, AZ" "Gilbert, AZ" "Glendale, AZ" "Mesa, AZ" "Peoria, AZ" "Phoenix, AZ" "Scottsdale, AZ" "Tempe, AZ" "Tucson, AZ"
+"Little Rock, AR"
+"Anaheim, CA" "Bakersfield, CA" "Chula Vista, CA" "Fremont, CA" "Fresno, CA" "Irvine, CA" "Long Beach, CA" "Los Angeles, CA"
+"Modesto, CA" "Oakland, CA" "Oxnard, CA" "Riverside, CA" "Sacramento, CA" "San Bernardino, CA" "San Diego, CA"
+"San Jose, CA" "Santa Ana, CA" "Stockton, CA"
+"Colorado Springs, CO" "Denver, CO" "Aurora, CO"
+"Hartford, CT" "New Haven, CT"
+"Washington, DC"
+"Fort Lauderdale, FL" "Hialeah, FL" "Jacksonville, FL" "Miami, FL" "Orlando, FL" "Pembroke Pines, FL"
+"Port St. Lucie, FL" "St. Petersburg, FL" "Tampa, FL"
+"Atlanta, GA" "Augusta, GA" "Columbus, GA" "Savannah, GA"
+"Boise, ID"
+"Chicago, IL" "Naperville, IL" "Peoria, IL" "Rockford, IL" "Springfield, IL"
+"Indianapolis, IN" "Fort Wayne, IN"
+"Des Moines, IA"
+"Overland Park, KS" "Wichita, KS"
+"Lexington, KY" "Louisville, KY"
+"Baton Rouge, LA" "Lafayette, LA" "New Orleans, LA" "Shreveport, LA"
+"Boston, MA" "Springfield, MA"
+"Baltimore, MD"
+"Portland, ME"
+"Detroit, MI" "Grand Rapids, MI" "Ann Arbor, MI"
+"Minneapolis, MN" "St. Paul, MN"
+"Kansas City, MO" "Springfield, MO" "St. Louis, MO"
+"Jackson, MS"
+"Bozeman, MT" "Missoula, MT"
+"Charlotte, NC" "Durham, NC" "Greensboro, NC" "Raleigh, NC" "Winston-Salem, NC"
+"Omaha, NE"
+"Manchester, NH"
+"Jersey City, NJ" "Newark, NJ" "Paterson, NJ"
+"Albuquerque, NM" "Santa Fe, NM"
+"Henderson, NV" "Las Vegas, NV" "North Las Vegas, NV" "Reno, NV"
+"Albany, NY" "Buffalo, NY" "Rochester, NY" "Syracuse, NY" "Yonkers, NY"
+"Cincinnati, OH" "Cleveland, OH" "Columbus, OH" "Toledo, OH"
+"Oklahoma City, OK" "Tulsa, OK"
+"Bend, OR" "Eugene, OR" "Gresham, OR" "Portland, OR" "Salem, OR"
+"Philadelphia, PA" "Pittsburgh, PA"
+"Providence, RI"
+"Charleston, SC" "Columbia, SC"
+"Sioux Falls, SD"
+"Chattanooga, TN" "Clarksville, TN" "Memphis, TN" "Murfreesboro, TN" "Nashville, TN"
+"Arlington, TX" "Austin, TX" "Corpus Christi, TX" "Dallas, TX" "El Paso, TX" "Fort Worth, TX" "Garland, TX" "Houston, TX"
+"Irving, TX" "Lubbock, TX" "Plano, TX" "San Antonio, TX"
+"Provo, UT" "Salt Lake City, UT"
+"Richmond, VA" "Virginia Beach, VA"
+"Seattle, WA" "Spokane, WA" "Tacoma, WA" "Vancouver, WA"
+"Green Bay, WI" "Madison, WI" "Milwaukee, WI"
+"Cheyenne, WY"
 )
 
 # Random selection ----------------------------------------------------

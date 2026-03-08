@@ -44,6 +44,26 @@ PROCESSED_REPLY_IDS_FILE = os.path.join(DATA_DIR, "processed_reply_message_ids.c
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
 DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
 LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
+STARTUP_PRIORITY = os.getenv("STARTUP_PRIORITY", "false").strip().lower() in {"1", "true", "yes", "on"}
+STARTUP_SCORE_BOOST = int(os.getenv("STARTUP_SCORE_BOOST", "2"))
+STARTUP_MAX_AGE_YEARS = int(os.getenv("STARTUP_MAX_AGE_YEARS", "5"))
+STARTUP_EXCLUDE_TECH = os.getenv("STARTUP_EXCLUDE_TECH", "true").strip().lower() in {"1", "true", "yes", "on"}
+STARTUP_HINT_KEYWORDS = tuple(
+    token.strip().lower()
+    for token in os.getenv(
+        "STARTUP_HINT_KEYWORDS",
+        "founded,established,since,newly opened,recently opened,just launched,new business,new company",
+    ).split(",")
+    if token.strip()
+)
+STARTUP_TECH_EXCLUDE_KEYWORDS = tuple(
+    token.strip().lower()
+    for token in os.getenv(
+        "STARTUP_TECH_EXCLUDE_KEYWORDS",
+        "saas,software,app,platform,ai,ml,machine learning,cloud,devops,fintech,edtech,martech",
+    ).split(",")
+    if token.strip()
+)
 PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
 BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -188,15 +208,33 @@ def load_sent_log():
     if not os.path.exists(SENT_LOG):
         return set()
     with open(SENT_LOG, newline="") as f:
-        return set(row[0].strip().lower() for row in csv.reader(f))
+        sent = set()
+        for row in csv.reader(f):
+            if not row:
+                continue
+            first = (row[0] or "").strip().lower()
+            if not first or first == "email":
+                continue
+            sent.add(first)
+        return sent
 
-def append_to_log(email):
+def append_to_log(email, lead_score="", source_file=""):
     with open(SENT_LOG, "a", newline="") as f:
-        csv.writer(f).writerow([email.lower()])
+        csv.writer(f).writerow([
+            email.lower(),
+            lead_score,
+            datetime.now().isoformat(timespec="seconds"),
+            os.path.basename(source_file or ""),
+        ])
 
-def append_to_daily_log(email):
+def append_to_daily_log(email, lead_score="", source_file=""):
     with open(DAILY_SENT_LOG, "a", newline="") as f:
-        csv.writer(f).writerow([email.lower()])
+        csv.writer(f).writerow([
+            email.lower(),
+            lead_score,
+            datetime.now().isoformat(timespec="seconds"),
+            os.path.basename(source_file or ""),
+        ])
 
 
 def load_pending_rows():
@@ -222,7 +260,7 @@ def save_pending_rows(rows):
     if not rows:
         default_fields = [
             "name", "emails", "notes", "website", "link",
-            "__source_file", "__town", "__service", "__queued_at",
+            "lead_score", "__source_file", "__town", "__service", "__queued_at",
         ]
         with open(pending_file, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=default_fields)
@@ -242,11 +280,13 @@ def save_pending_rows(rows):
             writer.writerow({k: row.get(k, "") for k in merged_fieldnames})
 
 
-def build_pending_row(row, source_file="", town="", service=""):
+def build_pending_row(row, source_file="", town="", service="", lead_score=""):
     pending_row = dict(row or {})
     pending_row["__source_file"] = source_file or pending_row.get("__source_file", "")
     pending_row["__town"] = town or pending_row.get("__town", "")
     pending_row["__service"] = service or pending_row.get("__service", "")
+    if lead_score != "":
+        pending_row["lead_score"] = lead_score
     pending_row.pop("__skip_reason", None)
     pending_row["__queued_at"] = datetime.now().isoformat(timespec="seconds")
     return pending_row
@@ -587,7 +627,49 @@ def score_lead(row, email_field):
     if any(token in notes for token in ["under construction", "business.site", "no website"]):
         score += 1
 
+    if STARTUP_PRIORITY:
+        score += startup_signal_score(row, email_field)
+
     return score
+
+
+def startup_signal_score(row, email_field=""):
+    score = 0
+    fields = [
+        normalize_text_value(row.get("name", "")),
+        normalize_text_value(row.get("notes", "")),
+        normalize_text_value(row.get("link", "")),
+        normalize_text_value(row.get("website", "")),
+    ]
+    blob = " ".join(fields).lower()
+
+    if STARTUP_EXCLUDE_TECH and STARTUP_TECH_EXCLUDE_KEYWORDS:
+        if any(token in blob for token in STARTUP_TECH_EXCLUDE_KEYWORDS):
+            return 0
+
+    # Prefer age-based startup detection over industry/TLD heuristics.
+    current_year = datetime.now().year
+    year_match = re.search(r"\\b(?:founded|est\\.?|established|since)\\s*(?:in\\s*)?(19\\d{2}|20\\d{2})\\b", blob)
+    age_match = False
+    if year_match:
+        founded_year = int(year_match.group(1))
+        age_years = current_year - founded_year
+        if 0 <= age_years <= max(0, STARTUP_MAX_AGE_YEARS):
+            age_match = True
+            score += 1
+
+    young_phrase_match = bool(re.search(r"\\bnewly opened|recently opened|just launched|new business|new company\\b", blob))
+    if young_phrase_match:
+        score += 1
+
+    # Optional custom hints only count when paired with a young-age signal.
+    if STARTUP_HINT_KEYWORDS and any(token in blob for token in STARTUP_HINT_KEYWORDS):
+        if age_match or young_phrase_match:
+            score += 1
+
+    if score <= 0:
+        return 0
+    return max(0, STARTUP_SCORE_BOOST)
 
 
 def should_skip_non_business_lead(row, email_field):
@@ -910,7 +992,11 @@ def send_cold_emails(csv_file=None):
         if email_field in seen_emails:
             continue
         seen_emails.add(email_field)
+        row["__lead_score"] = score_lead(row, email_field)
         combined_rows.append(row)
+
+    # Highest quality first: prioritize candidates with stronger lead_score.
+    combined_rows.sort(key=lambda item: int(item.get("__lead_score", -999999)), reverse=True)
 
     carryover_rows = []
 
@@ -947,7 +1033,15 @@ def send_cold_emails(csv_file=None):
             if MAX_EMAILS_PER_DOMAIN > 0 and domain_send_counts.get(domain, 0) >= MAX_EMAILS_PER_DOMAIN:
                 print(f"[DOMAIN-CAP] Deferring {email_field} (domain {domain} cap reached)")
                 if not DRY_RUN:
-                    carryover_rows.append(build_pending_row(row, source_file=csv_file, town=row_town, service=row_service_ctx))
+                    carryover_rows.append(
+                        build_pending_row(
+                            row,
+                            source_file=csv_file,
+                            town=row_town,
+                            service=row_service_ctx,
+                            lead_score=row.get("__lead_score", ""),
+                        )
+                    )
                 continue
 
             should_skip, reason = should_skip_non_business_lead(row, email_field)
@@ -961,12 +1055,21 @@ def send_cold_emails(csv_file=None):
                 continue
 
             lead_score = score_lead(row, email_field)
+            row["__lead_score"] = lead_score
             if lead_score < LEAD_SCORE_THRESHOLD:
                 print(f"[SCORE] Skipping {email_field} (score={lead_score}, threshold={LEAD_SCORE_THRESHOLD})")
                 continue
 
             if not DRY_RUN and remaining_quota <= 0:
-                carryover_rows.append(build_pending_row(row, source_file=csv_file, town=row_town, service=row_service_ctx))
+                carryover_rows.append(
+                    build_pending_row(
+                        row,
+                        source_file=csv_file,
+                        town=row_town,
+                        service=row_service_ctx,
+                        lead_score=lead_score,
+                    )
+                )
                 continue
 
             business = clean_business_name(row.get("name", ""), recipient_email=email_field)
@@ -986,7 +1089,7 @@ def send_cold_emails(csv_file=None):
 
             if DRY_RUN:
                 body_preview = "\n".join(body.splitlines()[:8])
-                print(f"[DRY-SEND] {business} → {email_field} | {subject}")
+                print(f"[DRY-SEND] {business} → {email_field} | score={lead_score} | {subject}")
                 print(f"[DRY-BODY]\n{body_preview}\n---")
                 domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
                 remaining_quota -= 1
@@ -997,18 +1100,26 @@ def send_cold_emails(csv_file=None):
 
             try:
                 server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
-                append_to_log(email_field)
-                append_to_daily_log(email_field)
+                append_to_log(email_field, lead_score=lead_score, source_file=csv_file)
+                append_to_daily_log(email_field, lead_score=lead_score, source_file=csv_file)
                 sent.add(email_field)
                 domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
                 remaining_quota -= 1
-                print(f"[SENT] {business} → {email_field} | {subject}")
+                print(f"[SENT] {business} → {email_field} | score={lead_score} | {subject}")
                 if remaining_quota <= 0:
                     print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}).")
                 time.sleep(random.uniform(1,5))
             except Exception as e:
                 print(f"[ERR] {email_field}: {e}")
-                carryover_rows.append(build_pending_row(row, source_file=csv_file, town=row_town, service=row_service_ctx))
+                carryover_rows.append(
+                    build_pending_row(
+                        row,
+                        source_file=csv_file,
+                        town=row_town,
+                        service=row_service_ctx,
+                        lead_score=lead_score,
+                    )
+                )
 
     if DRY_RUN:
         process_rows(server=None)

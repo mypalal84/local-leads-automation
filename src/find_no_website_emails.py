@@ -26,6 +26,26 @@ HUNTER = os.getenv("HUNTER_API_KEY")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
 PRE_ENRICH_SCORE_FILTER = os.getenv("PRE_ENRICH_SCORE_FILTER", "true").strip().lower() in {"1", "true", "yes", "on"}
+STARTUP_PRIORITY = os.getenv("STARTUP_PRIORITY", "false").strip().lower() in {"1", "true", "yes", "on"}
+STARTUP_SCORE_BOOST = int(os.getenv("STARTUP_SCORE_BOOST", "2"))
+STARTUP_MAX_AGE_YEARS = int(os.getenv("STARTUP_MAX_AGE_YEARS", "5"))
+STARTUP_EXCLUDE_TECH = os.getenv("STARTUP_EXCLUDE_TECH", "true").strip().lower() in {"1", "true", "yes", "on"}
+STARTUP_HINT_KEYWORDS = tuple(
+    token.strip().lower()
+    for token in os.getenv(
+        "STARTUP_HINT_KEYWORDS",
+        "founded,established,since,newly opened,recently opened,just launched,new business,new company",
+    ).split(",")
+    if token.strip()
+)
+STARTUP_TECH_EXCLUDE_KEYWORDS = tuple(
+    token.strip().lower()
+    for token in os.getenv(
+        "STARTUP_TECH_EXCLUDE_KEYWORDS",
+        "saas,software,app,platform,ai,ml,machine learning,cloud,devops,fintech,edtech,martech",
+    ).split(",")
+    if token.strip()
+)
 
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -176,6 +196,11 @@ def increment_metric(metric_key: str, amount: int = 1):
             save_run_metrics(data)
     except Exception:
         pass
+
+
+def increment_api_counter(provider: str):
+    """Backward-compatible shim for legacy tests/callers."""
+    increment_metric(provider)
 
 
 def metric_provider_for_cache_prefix(prefix: str) -> str:
@@ -449,7 +474,49 @@ def pre_enrich_base_score(row):
         if any(netloc == d or netloc.endswith(f".{d}") for d in DIRECTORY_DOMAIN_HINTS):
             score -= 1
 
+    if STARTUP_PRIORITY:
+        score += startup_signal_score(row)
+
     return score
+
+
+def startup_signal_score(row):
+    score = 0
+    fields = [
+        row.get("name", ""),
+        row.get("notes", ""),
+        row.get("link", ""),
+        row.get("website", ""),
+    ]
+    blob = " ".join("" if pd.isna(v) else str(v) for v in fields).lower()
+
+    if STARTUP_EXCLUDE_TECH and STARTUP_TECH_EXCLUDE_KEYWORDS:
+        if any(token in blob for token in STARTUP_TECH_EXCLUDE_KEYWORDS):
+            return 0
+
+    # Prefer age-based startup detection over industry/TLD heuristics.
+    current_year = datetime.now().year
+    year_match = re.search(r"\\b(?:founded|est\\.?|established|since)\\s*(?:in\\s*)?(19\\d{2}|20\\d{2})\\b", blob)
+    age_match = False
+    if year_match:
+        founded_year = int(year_match.group(1))
+        age_years = current_year - founded_year
+        if 0 <= age_years <= max(0, STARTUP_MAX_AGE_YEARS):
+            age_match = True
+            score += 1
+
+    young_phrase_match = bool(re.search(r"\\bnewly opened|recently opened|just launched|new business|new company\\b", blob))
+    if young_phrase_match:
+        score += 1
+
+    # Optional custom hints only count when paired with a young-age signal.
+    if STARTUP_HINT_KEYWORDS and any(token in blob for token in STARTUP_HINT_KEYWORDS):
+        if age_match or young_phrase_match:
+            score += 1
+
+    if score <= 0:
+        return 0
+    return max(0, STARTUP_SCORE_BOOST)
 
 
 def can_reach_send_threshold(row, threshold):
