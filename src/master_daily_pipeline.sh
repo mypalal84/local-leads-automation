@@ -793,9 +793,9 @@ Derived Efficiency:
 - API success rate: ${api_success_rate:-0}%
 - Cache hit rate: ${cache_hit_rate:-0}%
 - Emails/API call: ${emails_per_api_call:-0}
-- Est. Google billed incremental run cost (tiered): $${google_cost_estimated_run:-0}
-- Est. Google billed MTD cost (tiered): $${google_cost_estimated_mtd:-0}
-- Est. Google projected month-end billed cost: $${google_cost_estimated_monthly_projected:-0}
+- Est. Google billed incremental run cost (tiered): \$${google_cost_estimated_run:-0}
+- Est. Google billed MTD cost (tiered): \$${google_cost_estimated_mtd:-0}
+- Est. Google projected month-end billed cost: \$${google_cost_estimated_monthly_projected:-0}
 - Emails per Google dollar: ${emails_per_google_dollar:-0}
 EOF
 )
