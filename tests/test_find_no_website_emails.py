@@ -527,3 +527,54 @@ def test_enrich_skips_when_email_domain_has_live_website(tmp_path, monkeypatch):
 
     out_path = enrich_mod.enrich(service, town)
     assert out_path is None
+
+
+def test_enrich_limits_hunter_lookups_per_lead_to_one_by_default(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_DOMAINS_PER_LEAD", 1)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Acme Fencing",
+                "emails": "",
+                "website": "",
+                "notes": "",
+                "link": "",
+            }
+        )
+
+    monkeypatch.setattr(
+        enrich_mod,
+        "search_serper",
+        lambda _query: [
+            "https://first-example.com/contact",
+            "https://second-example.com/about",
+            "https://third-example.com/team",
+        ],
+    )
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+
+    hunter_calls = {"count": 0}
+
+    def fake_hunter(_domain):
+        hunter_calls["count"] += 1
+        return []
+
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+    assert hunter_calls["count"] == 1

@@ -32,6 +32,8 @@ Daily_Leads/
 │   ├── daily_kpi.csv            # Daily KPI snapshots per pipeline run
 │   ├── run_metrics/             # Per-run API call counters
 │   │   └── run_metrics_<timestamp>.json
+│   │   ├── send_audit_<run_id>.json
+│   │   └── send_audit_<run_id>.csv
 │   ├── pipeline.log             # Master cron execution log
 │   └── .pairs.tmp               # Auto‑generated, then removed
 │
@@ -51,6 +53,7 @@ Daily_Leads/
 │   ├── discover_no_website_leads.py # Lead discovery (Google Places New + Serper fallback)
 │   ├── find_no_website_emails.py# Lead enrichment (Serper + Hunter)
 │   ├── send_cold_emails.py      # Outreach + reply handling
+│   ├── generate_send_audit.py   # Post-run audit (suppressed/current/fail-no-suppression lists)
 │   └── daily_summary_report.py  # Optional standalone summary mailer
 │
 ├── tests/                       # Pytest suite (unit + dry-run integration)

@@ -540,6 +540,25 @@ if [[ -f "$PENDING_FILE" ]]; then
   fi
 fi
 
+TODAY_SENT_LOG="$DATA_DIR/daily_sent/daily_sent_$(date +%Y-%m-%d).csv"
+SEND_AUDIT_JSON=""
+SEND_AUDIT_CSV=""
+if [[ -f "$TODAY_SENT_LOG" ]]; then
+  if audit_output=$("$PYTHON_BIN" "$SRC_DIR/generate_send_audit.py" \
+    --base-dir "$BASE_DIR" \
+    --daily-sent "$TODAY_SENT_LOG" \
+    --run-id "$RUN_ID" \
+    --output-dir "$RUN_METRICS_DIR" 2>&1); then
+    log "$audit_output" | tee -a "$LOG_DIR/summary.log"
+    SEND_AUDIT_JSON="$RUN_METRICS_DIR/send_audit_${RUN_ID}.json"
+    SEND_AUDIT_CSV="$RUN_METRICS_DIR/send_audit_${RUN_ID}.csv"
+  else
+    log "[WARN] Send audit generation failed: $audit_output" | tee -a "$LOG_DIR/summary.log"
+  fi
+else
+  log "[WARN] Send audit skipped: daily sent ledger not found at $TODAY_SENT_LOG" | tee -a "$LOG_DIR/summary.log"
+fi
+
 RUN_HISTORY_CSV="$RUN_METRICS_DIR/history.csv"
 
 metrics_snapshot=$(RUN_SENT_COUNT="$sent_count" RUN_HISTORY_CSV="$RUN_HISTORY_CSV" GOOGLE_TEXT_PRICE_PER_1000="$GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000" GOOGLE_DETAILS_PRICE_PER_1000="$GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000" "$PYTHON_BIN" - <<END
@@ -827,6 +846,8 @@ Log files:
 - Email: $LOG_DIR/email.log
 - KPI: $KPI_CSV
 - Metrics history: $RUN_HISTORY_CSV
+- Send audit JSON: ${SEND_AUDIT_JSON:-n/a}
+- Send audit CSV: ${SEND_AUDIT_CSV:-n/a}
 EOF
 )
 

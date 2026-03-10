@@ -47,6 +47,11 @@ STARTUP_TECH_EXCLUDE_KEYWORDS = tuple(
     if token.strip()
 )
 
+try:
+    HUNTER_MAX_DOMAINS_PER_LEAD = max(0, int(os.getenv("HUNTER_MAX_DOMAINS_PER_LEAD", "1")))
+except Exception:
+    HUNTER_MAX_DOMAINS_PER_LEAD = 1
+
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_DIR = os.path.join(BASE_DIR, "data")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
@@ -661,6 +666,7 @@ def enrich(service, town, max_leads=None):
             emails_found = []
             confirmed_site = ""
 
+            candidate_domains = []
             for link in links:
                 domain = urlparse(link).netloc.lower()
                 if not domain:
@@ -677,6 +683,18 @@ def enrich(service, town, max_leads=None):
                     if DEBUG:
                         print(f"[SKIP] Confirmed business website: {domain}")
                     break
+
+                if domain not in candidate_domains:
+                    candidate_domains.append(domain)
+
+            if not confirmed_site and HUNTER_MAX_DOMAINS_PER_LEAD > 0:
+                if DEBUG and len(candidate_domains) > HUNTER_MAX_DOMAINS_PER_LEAD:
+                    print(
+                        f"[HUNTER-CAP] Limiting domain checks to {HUNTER_MAX_DOMAINS_PER_LEAD} "
+                        f"of {len(candidate_domains)} candidate domains"
+                    )
+
+            for domain in ([] if confirmed_site else candidate_domains[:HUNTER_MAX_DOMAINS_PER_LEAD]):
 
                 emails = hunter_email_lookup(domain)
                 viable_emails = filter_viable_emails(emails)
