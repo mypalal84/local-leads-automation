@@ -334,6 +334,17 @@ def test_enrich_domain_match_guard_skips_when_serp_domain_matches_email_domain(t
     assert out_path is None
 
 
+def test_business_name_matches_domain_true_for_get_fit_style_name():
+    assert enrich_mod.business_name_matches_domain("Get Fit NH", "getfitnh.com") is True
+
+
+def test_business_name_matches_domain_false_for_cross_company_domain():
+    assert enrich_mod.business_name_matches_domain(
+        "Down & Dirty Cleaning Services LLC",
+        "corporatecleanservices.com",
+    ) is False
+
+
 def test_is_confirmed_business_website_rejects_directory_domain(monkeypatch):
     monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: True)
     assert enrich_mod.is_confirmed_business_website("https://www.houzz.com/professionals/example") is False

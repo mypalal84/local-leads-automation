@@ -435,6 +435,34 @@ def is_placeholder_domain(domain: str) -> bool:
     return clean.startswith("example")
 
 
+def business_name_matches_domain(business_name: str, domain: str) -> bool:
+    business = (business_name or "").strip().lower()
+    clean_domain = (domain or "").strip().lower().replace("www.", "")
+    if not business or not clean_domain:
+        return False
+
+    root = clean_domain.split(".", 1)[0]
+    root_alnum = re.sub(r"[^a-z0-9]", "", root)
+    if not root_alnum:
+        return False
+
+    business_alnum = re.sub(r"[^a-z0-9]", "", business)
+    business_alnum = re.sub(r"(llc|inc|corp|corporation|co|company)$", "", business_alnum)
+    if len(business_alnum) >= 6 and (business_alnum in root_alnum or root_alnum in business_alnum):
+        return True
+
+    stopwords = {
+        "the", "and", "llc", "inc", "co", "corp", "corporation", "company",
+        "services", "service",
+    }
+    tokens = [
+        tok for tok in re.findall(r"[a-z0-9]+", business)
+        if len(tok) >= 3 and tok not in stopwords
+    ]
+    token_hits = sum(1 for tok in tokens if tok in root_alnum)
+    return token_hits >= 2
+
+
 def is_viable_email_address(email_addr: str) -> bool:
     value = (email_addr or "").strip().lower()
     if not value or "@" not in value:
@@ -666,6 +694,7 @@ def enrich(service, town, max_leads=None):
                         and not is_placeholder_domain(domain)
                         and not is_placeholder_domain(email_domain)
                         and domains_look_equivalent(domain, email_domain)
+                        and business_name_matches_domain(name, email_domain)
                     ):
                         confirmed_site = f"http://{email_domain}"
                         if DEBUG:
