@@ -157,7 +157,9 @@ DSN_SUBJECT_TOKENS = [
 ]
 HARD_BOUNCE_HINT_TOKENS = [
     "recipient server did not accept", "failed_precondition", "connect error", "connection refused",
-    "user unknown", "no such user", "mailbox unavailable", "address not found", "invalid recipient"
+    "user unknown", "no such user", "mailbox unavailable", "address not found", "invalid recipient",
+    "recipientnotfound", "resolver.adr.recipientnotfound", "not found by smtp address lookup",
+    "wasn't found at"
 ]
 SOFT_BOUNCE_HINT_TOKENS = [
     "temporarily", "try again later", "deferred", "greylist", "rate limit"
@@ -638,9 +640,9 @@ def is_delivery_status_notification(msg, subject):
 
 def classify_bounce_type(subject, body_text):
     text = f"{subject or ''} {body_text or ''}".lower()
-    if re.search(r"\b5\d\d\b|\b5\.\d\.\d\b", text):
+    if re.search(r"\b5\d\d\b|\b5\.\d\.\d+\b", text):
         return "hard"
-    if re.search(r"\b4\d\d\b|\b4\.\d\.\d\b", text):
+    if re.search(r"\b4\d\d\b|\b4\.\d\.\d+\b", text):
         return "soft"
     if any(token in text for token in HARD_BOUNCE_HINT_TOKENS):
         return "hard"

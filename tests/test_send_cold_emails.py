@@ -909,6 +909,11 @@ def test_classify_bounce_type_connection_refused_is_hard():
     assert sce.classify_bounce_type("Message not delivered", body) == "hard"
 
 
+def test_classify_bounce_type_recipient_not_found_is_hard():
+    body = "550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient adame@zillow.com not found by SMTP address lookup"
+    assert sce.classify_bounce_type("Message not delivered", body) == "hard"
+
+
 def test_handle_bounce_event_hard_suppresses_once(monkeypatch, capsys):
     calls = {"count": 0}
 
