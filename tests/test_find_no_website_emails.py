@@ -355,6 +355,11 @@ def test_is_confirmed_business_website_accepts_live_non_directory_domain(monkeyp
     assert enrich_mod.is_confirmed_business_website("https://callmilestone.com/duncanville/") is True
 
 
+def test_is_confirmed_business_website_accepts_wixsite_hosted_domains(monkeypatch):
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+    assert enrich_mod.is_confirmed_business_website("https://caldercitycleaning.wixsite.com/website") is True
+
+
 def test_is_non_business_domain_flags_directory_sites():
     assert enrich_mod.is_non_business_domain("www.indeed.com") is True
     assert enrich_mod.is_non_business_domain("nextdoor.com") is True

@@ -401,6 +401,10 @@ def is_confirmed_business_website(url_or_domain: str, business_name: str = "") -
     if domain.endswith(".gov") or domain.endswith(".edu"):
         return False
 
+    # Hosted builders like Wix still indicate an existing website.
+    if domain == "wixsite.com" or domain.endswith(".wixsite.com"):
+        return True
+
     return has_live_website(domain)
 
 
