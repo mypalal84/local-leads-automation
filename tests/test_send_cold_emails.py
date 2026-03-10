@@ -895,6 +895,61 @@ def test_handle_bounce_event_soft_logs_once(monkeypatch, capsys):
     assert out.count("soft bounce detected: info@organiccarpetcare.com") == 1
 
 
+def test_handle_bounce_event_unknown_suppresses_when_enabled(monkeypatch, capsys):
+    calls = {"count": 0}
+
+    def fake_append(email_addr, reason=""):
+        calls["count"] += 1
+        assert email_addr == "info@awesomeland.org"
+        assert reason == "delivery_failure_unknown"
+
+    monkeypatch.setattr(sce, "append_to_suppressions", fake_append)
+    monkeypatch.setattr(sce, "AUTO_SUPPRESS_UNKNOWN_BOUNCES", True)
+
+    seen = set()
+    first = sce.handle_bounce_event("info@awesomeland.org", "unknown", seen_bounce_events=seen)
+    second = sce.handle_bounce_event("info@awesomeland.org", "unknown", seen_bounce_events=seen)
+
+    out = capsys.readouterr().out
+    assert first is True
+    assert second is False
+    assert calls["count"] == 1
+    assert out.count("Unknown bounce suppressed: info@awesomeland.org") == 1
+
+
+def test_is_negative_reply_text_detects_stop_in_actual_reply_line():
+    subject = "Re: FastTrack Garage Door's Services + mobile site idea"
+    body = "STOP\n\nVon: alex@zbadigital.com <alex@zbadigital.com>\nDatum: Dienstag"
+    assert sce.is_negative_reply_text(subject, body) is True
+
+
+def test_is_negative_reply_text_ignores_quoted_footer_stop_phrase():
+    subject = "Re: FastTrack Garage Door's Services + mobile site idea"
+    body = (
+        "Thanks, maybe later.\n\n"
+        "From: alex@zbadigital.com <alex@zbadigital.com>\n"
+        "If this isn't relevant, reply STOP and I'll remove you from future emails."
+    )
+    assert sce.is_negative_reply_text(subject, body) is False
+
+
+def test_remove_from_log_handles_multicolumn_rows(tmp_path, monkeypatch):
+    sent_log = pathlib.Path(tmp_path) / "sent_log.csv"
+    with open(sent_log, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["first@example.com", "4", "2026-03-10T07:00:00", "leads_a.csv"])
+        writer.writerow(["reply@example.com", "3", "2026-03-10T07:01:00", "leads_b.csv"])
+
+    monkeypatch.setattr(sce, "SENT_LOG", str(sent_log))
+
+    sce.remove_from_log({"reply@example.com"})
+
+    with open(sent_log, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+
+    assert rows == [["first@example.com", "4", "2026-03-10T07:00:00", "leads_a.csv"]]
+
+
 def test_should_skip_non_business_lead_for_institutional_domain():
     row = {
         "name": "[PDF] When East meets West - Yale University",

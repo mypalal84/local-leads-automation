@@ -71,6 +71,7 @@ ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "tr
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 SKIP_REPLY_CHECK_CLEANUP = os.getenv("SKIP_REPLY_CHECK_CLEANUP", "false").strip().lower() in {"1", "true", "yes", "on"}
 HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD = max(0, int(os.getenv("HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD", "0")))
+AUTO_SUPPRESS_UNKNOWN_BOUNCES = os.getenv("AUTO_SUPPRESS_UNKNOWN_BOUNCES", "false").strip().lower() in {"1", "true", "yes", "on"}
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If this isn't relevant, reply STOP and I'll remove you from future emails.",
@@ -455,11 +456,37 @@ def build_subject_line(business, contact_name, town):
         town=format_town_for_copy(town),
     )
 
+
+def build_ssl_context():
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
 def remove_from_log(replied_emails):
-    if not os.path.exists(SENT_LOG): return
-    df = pd.read_csv(SENT_LOG, header=None, names=["email"])
-    df = df[~df["email"].isin(replied_emails)]
-    df.to_csv(SENT_LOG, header=False, index=False)
+    if not os.path.exists(SENT_LOG):
+        return
+
+    replied = {
+        (email_addr or "").strip().lower()
+        for email_addr in (replied_emails or [])
+        if (email_addr or "").strip()
+    }
+    if not replied:
+        return
+
+    rows_to_keep = []
+    with open(SENT_LOG, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if not row:
+                continue
+            email_addr = (row[0] or "").strip().lower()
+            if email_addr in replied:
+                continue
+            rows_to_keep.append(row)
+
+    with open(SENT_LOG, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerows(rows_to_keep)
 
 
 def load_processed_message_ids():
@@ -495,6 +522,32 @@ def is_auto_reply(msg, subject):
         return True
 
     return False
+
+
+def extract_reply_excerpt(body_text):
+    body_text = decode_fragment(body_text or "")
+    if not body_text:
+        return ""
+
+    # Ignore quoted thread content and keep only the newest reply section.
+    split_markers = [
+        "\nOn ",
+        "\nFrom:",
+        "\nVon:",
+        "\n-----Original Message-----",
+    ]
+    excerpt = body_text
+    for marker in split_markers:
+        idx = excerpt.find(marker)
+        if idx != -1:
+            excerpt = excerpt[:idx]
+    return excerpt.strip()
+
+
+def is_negative_reply_text(subject, body_text):
+    excerpt = extract_reply_excerpt(body_text)
+    combined = f"{subject or ''} {excerpt}".lower()
+    return any(keyword in combined for keyword in NEGATIVE_REPLY_KEYWORDS)
 
 
 def is_valid_email_syntax(email_addr):
@@ -591,6 +644,9 @@ def handle_bounce_event(bounced_email, bounce_type, seen_bounce_events=None):
     if bounce_type == "hard":
         append_to_suppressions(bounced_email, reason="delivery_failure_hard")
         print(f"[BOUNCE] Hard bounce suppressed: {bounced_email}")
+    elif bounce_type == "unknown" and AUTO_SUPPRESS_UNKNOWN_BOUNCES:
+        append_to_suppressions(bounced_email, reason="delivery_failure_unknown")
+        print(f"[BOUNCE] Unknown bounce suppressed: {bounced_email}")
     else:
         print(f"[BOUNCE] {bounce_type} bounce detected: {bounced_email} (not auto-suppressed)")
     return True
@@ -989,10 +1045,7 @@ def send_cold_emails(csv_file=None):
         return
 
     town, service = parse_context_from_filename(csv_file)
-    if certifi is not None:
-        context = ssl.create_default_context(cafile=certifi.where())
-    else:
-        context = ssl.create_default_context()
+    context = build_ssl_context()
 
     print(f"[INFO] Sending from file: {os.path.basename(csv_file)} ({town}, {service})")
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
@@ -1240,10 +1293,12 @@ def fetch_replies():
                 if msg.is_multipart():
                     for part in msg.walk():
                         if part.get_content_type() == "text/plain":
-                            body = decode_fragment(part.get_payload(decode=True)[:1500]).replace("\n"," ")
+                            body = decode_fragment(part.get_payload(decode=True)[:1500])
                             break
                 else:
-                    body = decode_fragment(msg.get_payload(decode=True))[:1500].replace("\n"," ")
+                    body = decode_fragment(msg.get_payload(decode=True))[:1500]
+
+                compact_body = re.sub(r"\s+", " ", body).strip()
 
                 if is_delivery_status_notification(msg, subject):
                     bounced_email = extract_bounced_recipient(msg, body)
@@ -1265,19 +1320,23 @@ def fetch_replies():
                     processed_ids.add(message_id)
                     append_processed_message_id(message_id)
 
+                reply_email = extract_email_address(frm)
+                is_negative = bool(reply_email and is_negative_reply_text(subject, body))
+
+                if is_negative:
+                    date = msg.get("Date", "")
+                    writer.writerow([frm, subject, compact_body[:150], date])
+                    replied_addresses.add(reply_email)
+                    append_to_suppressions(reply_email, reason="negative_reply")
+                    print(f"[SUPPRESS] Added from negative reply: {reply_email}")
+                    continue
+
                 if any(tok in subject.lower() for tok in ["question", "website", "mobile site", "call"]):
-                    body = body[:150]
-                    date = msg.get("Date","")
-                    writer.writerow([frm, subject, body, date])
-                    reply_email = extract_email_address(frm)
+                    date = msg.get("Date", "")
+                    writer.writerow([frm, subject, compact_body[:150], date])
                     if reply_email:
                         replied_addresses.add(reply_email)
                         print(f"[REPLY] {reply_email} | {subject}")
-
-                        combined = f"{subject} {body}".lower()
-                        if any(keyword in combined for keyword in NEGATIVE_REPLY_KEYWORDS):
-                            append_to_suppressions(reply_email, reason="negative_reply")
-                            print(f"[SUPPRESS] Added from negative reply: {reply_email}")
 
         mail.logout()
         if replied_addresses:
@@ -1316,7 +1375,7 @@ def send_reply_notifications(replied_addresses):
         msg["From"] = EMAIL_ADDR
         msg["To"] = REPLY_NOTIFY_TO
 
-        context = ssl.create_default_context()
+        context = build_ssl_context()
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as s:
             s.login(EMAIL_ADDR, EMAIL_PASS)
             s.sendmail(EMAIL_ADDR, [REPLY_NOTIFY_TO], msg.as_string())
