@@ -398,6 +398,7 @@ def test_filter_viable_emails_excludes_full_social_notification_domain_list():
             "msg@whatsapp.com",
             "msg@discord.com",
             "msg@telegram.org",
+            "support@carfax.com",
             "owner@acmefencing.com",
         ]
     )

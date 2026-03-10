@@ -97,7 +97,7 @@ NON_BUSINESS_RECIPIENT_DOMAINS = {
     "instagram.com", "mail.instagram.com", "facebook.com", "facebookmail.com",
     "linkedin.com", "twitter.com", "x.com", "tiktok.com", "tiktokv.com",
     "pinterest.com", "snapchat.com", "youtube.com", "support.google.com",
-    "reddit.com", "whatsapp.com", "discord.com", "telegram.org",
+    "reddit.com", "whatsapp.com", "discord.com", "telegram.org", "carfax.com",
 }
 NON_BUSINESS_SOURCE_DOMAINS = {
     "yelp.com", "bbb.org", "homeadvisor.com", "angi.com", "thumbtack.com",
@@ -175,6 +175,7 @@ DEFAULT_BLOCKED_RECIPIENT_DOMAINS = {
     "facebook.com", "facebookmail.com", "linkedin.com", "twitter.com", "x.com",
     "tiktok.com", "tiktokv.com", "youtube.com", "support.google.com", "pinterest.com",
     "snapchat.com", "reddit.com", "whatsapp.com", "discord.com", "telegram.org",
+    "carfax.com",
     "mapquest.com", "yellowpages.com",
     "yelp.com", "bbb.org", "angi.com", "thumbtack.com", "homeadvisor.com", "houzz.com",
     "zoominfo.com", "manta.com", "consumeraffairs.com",

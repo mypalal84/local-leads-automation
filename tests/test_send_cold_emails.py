@@ -1081,6 +1081,7 @@ def test_should_skip_non_business_lead_for_directory_text_pattern():
         "msg@whatsapp.com",
         "msg@discord.com",
         "msg@telegram.org",
+        "support@carfax.com",
     ],
 )
 def test_should_skip_non_business_lead_for_social_notification_domains(email_addr):

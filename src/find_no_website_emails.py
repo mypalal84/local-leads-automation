@@ -134,6 +134,7 @@ NON_BUSINESS_EMAIL_DOMAIN_HINTS = {
     "zoominfo.com",
     "manta.com",
     "care.com",
+    "carfax.com",
 }
 
 
