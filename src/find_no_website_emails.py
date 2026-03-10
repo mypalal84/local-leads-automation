@@ -414,6 +414,27 @@ def is_non_business_domain(domain: str) -> bool:
     )
 
 
+def domains_look_equivalent(primary_domain: str, candidate_domain: str) -> bool:
+    primary = (primary_domain or "").strip().lower().replace("www.", "")
+    candidate = (candidate_domain or "").strip().lower().replace("www.", "")
+    if not primary or not candidate:
+        return False
+    return (
+        primary == candidate
+        or primary.endswith(f".{candidate}")
+        or candidate.endswith(f".{primary}")
+    )
+
+
+def is_placeholder_domain(domain: str) -> bool:
+    clean = (domain or "").strip().lower().replace("www.", "")
+    if not clean:
+        return True
+    if clean in {"example.com", "example.org", "example.net", "test.com", "localhost"}:
+        return True
+    return clean.startswith("example")
+
+
 def is_viable_email_address(email_addr: str) -> bool:
     value = (email_addr or "").strip().lower()
     if not value or "@" not in value:
@@ -634,6 +655,21 @@ def enrich(service, town, max_leads=None):
                         confirmed_site = f"http://{email_domain}"
                         if DEBUG:
                             print(f"[SKIP] Confirmed website via email domain: {email_domain}")
+                        break
+
+                    # Additional guardrail: when SERP already returned the same non-directory
+                    # domain as the email domain, treat it as an existing website even if
+                    # live probing is temporarily inconclusive.
+                    if (
+                        not is_non_business_domain(domain)
+                        and not is_non_business_domain(email_domain)
+                        and not is_placeholder_domain(domain)
+                        and not is_placeholder_domain(email_domain)
+                        and domains_look_equivalent(domain, email_domain)
+                    ):
+                        confirmed_site = f"http://{email_domain}"
+                        if DEBUG:
+                            print(f"[SKIP] Domain-match website signal: {domain} ~= {email_domain}")
                         break
 
                     emails_found = viable_emails

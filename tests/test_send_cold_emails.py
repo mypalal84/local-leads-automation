@@ -7,6 +7,11 @@ import pytest
 import send_cold_emails as sce
 
 
+@pytest.fixture(autouse=True)
+def _disable_website_guard_by_default(monkeypatch):
+    monkeypatch.setattr(sce, "PRE_SEND_WEBSITE_GUARD", False)
+
+
 class DummySMTP:
     def __init__(self, *args, **kwargs):
         self.sent = []
@@ -197,6 +202,49 @@ def test_sender_skips_domain_when_hard_bounce_threshold_reached(tmp_path, monkey
 
     assert ("owner@okbiz.com",) in smtp.sent
     assert ("owner@blocked.com",) not in smtp.sent
+
+
+def test_sender_pre_send_website_guard_skips_live_site_domain(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Get Fit NH",
+                "emails": "meagan@getfitnh.com",
+                "website": "",
+                "notes": "",
+                "link": "https://maps.google.com/?cid=1",
+            }
+        )
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "PRE_SEND_WEBSITE_GUARD", True)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", False)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce, "fetch_replies", lambda: set())
+    monkeypatch.setattr(sce, "has_live_business_website", lambda domain: domain == "getfitnh.com")
+    monkeypatch.setattr(sce.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sce.random, "uniform", lambda *_args, **_kwargs: 0)
+
+    smtp = DummySMTP()
+    monkeypatch.setattr(sce.smtplib, "SMTP_SSL", lambda *args, **kwargs: smtp)
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+
+    assert smtp.sent == []
 
 
 def test_append_to_suppressions_is_idempotent(tmp_path, monkeypatch):

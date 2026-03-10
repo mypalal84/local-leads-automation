@@ -8,6 +8,7 @@ delay randomization, and reply‑based cleanup.
 """
 
 import os, smtplib, ssl, csv, time, random, imaplib, email, re, sys
+import requests
 from email.mime.text import MIMEText
 from email.header import decode_header
 from datetime import datetime, timedelta
@@ -65,6 +66,8 @@ STARTUP_TECH_EXCLUDE_KEYWORDS = tuple(
     if token.strip()
 )
 PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip().lower() in {"1", "true", "yes", "on"}
+PRE_SEND_WEBSITE_GUARD = os.getenv("PRE_SEND_WEBSITE_GUARD", "false").strip().lower() in {"1", "true", "yes", "on"}
+WEBSITE_GUARD_TIMEOUT_SECONDS = max(1.0, float(os.getenv("WEBSITE_GUARD_TIMEOUT_SECONDS", "4")))
 MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
 BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
 ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -160,6 +163,10 @@ SOFT_BOUNCE_HINT_TOKENS = [
     "temporarily", "try again later", "deferred", "greylist", "rate limit"
 ]
 MX_CACHE = {}
+WEBSITE_GUARD_CACHE = {}
+WEBSITE_GUARD_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; ZBA-LeadBot/1.0; +https://zbadigital.com)"
+}
 
 DEFAULT_BLOCKED_RECIPIENT_DOMAINS = {
     "groups.io", "showmelocal.com", "instagram.com", "mail.instagram.com",
@@ -576,6 +583,41 @@ def should_send_to_email(email_addr):
     if not has_mx_record(domain):
         return False, "no_mx"
     return True, "ok"
+
+
+def has_live_business_website(domain):
+    clean_domain = (domain or "").strip().lower().replace("www.", "")
+    if not clean_domain or "." not in clean_domain:
+        return False
+    if clean_domain.endswith(".gov") or clean_domain.endswith(".edu"):
+        return False
+    if domain_matches_any(clean_domain, NON_BUSINESS_RECIPIENT_DOMAINS):
+        return False
+    if domain_matches_any(clean_domain, BLOCKED_RECIPIENT_DOMAINS):
+        return False
+
+    if clean_domain in WEBSITE_GUARD_CACHE:
+        return WEBSITE_GUARD_CACHE[clean_domain]
+
+    for candidate in (f"https://{clean_domain}", f"http://{clean_domain}"):
+        try:
+            resp = requests.get(
+                candidate,
+                headers=WEBSITE_GUARD_HEADERS,
+                timeout=WEBSITE_GUARD_TIMEOUT_SECONDS,
+                allow_redirects=True,
+            )
+            if 200 <= resp.status_code < 400:
+                content_type = (resp.headers.get("Content-Type", "") or "").lower()
+                body = (resp.text or "")[:3000]
+                if "html" in content_type or re.search(r"<html|<!doctype", body, re.I):
+                    WEBSITE_GUARD_CACHE[clean_domain] = True
+                    return True
+        except Exception:
+            continue
+
+    WEBSITE_GUARD_CACHE[clean_domain] = False
+    return False
 
 
 def is_delivery_status_notification(msg, subject):
@@ -1147,6 +1189,10 @@ def send_cold_emails(csv_file=None):
             mismatch_skip, mismatch_reason = should_skip_domain_mismatch(row, email_field)
             if mismatch_skip:
                 print(f"[QUALITY] Skipping {email_field} ({mismatch_reason})")
+                continue
+
+            if PRE_SEND_WEBSITE_GUARD and domain and has_live_business_website(domain):
+                print(f"[WEBSITE-GUARD] Skipping {email_field} (live website detected for domain {domain})")
                 continue
 
             lead_score = score_lead(row, email_field)

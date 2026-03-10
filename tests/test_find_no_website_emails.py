@@ -298,6 +298,42 @@ def test_existing_website_row_skips_api_calls(tmp_path, monkeypatch):
     assert calls["hunter"] == 0
 
 
+def test_enrich_domain_match_guard_skips_when_serp_domain_matches_email_domain(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+
+    service = "Personal Trainers"
+    town = "Manchester, NH"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Get Fit NH",
+                "emails": "",
+                "website": "",
+                "notes": "",
+                "link": "https://maps.google.com/?cid=1",
+            }
+        )
+
+    monkeypatch.setattr(enrich_mod, "search_serper", lambda _query: ["https://www.getfitnh.com/about"])
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", lambda _domain: ["meagan@getfitnh.com"])
+    monkeypatch.setattr(enrich_mod, "is_confirmed_business_website", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town, max_leads=1)
+
+    # Lead is skipped as website-positive via domain-match guard, so no enriched output remains.
+    assert out_path is None
+
+
 def test_is_confirmed_business_website_rejects_directory_domain(monkeypatch):
     monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: True)
     assert enrich_mod.is_confirmed_business_website("https://www.houzz.com/professionals/example") is False
