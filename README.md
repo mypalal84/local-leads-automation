@@ -109,6 +109,10 @@ STARTUP_EXCLUDE_TECH=true
 CACHE_TTL_DAYS=7
 CACHE_MAX_MB=256
 HUNTER_MAX_DOMAINS_PER_LEAD=1
+# Two-pass enrichment prioritization (safe rollout: disabled by default)
+ENRICH_TWO_PASS_ENABLED=false
+# Percent of rows prioritized in pass 1 (high/medium intent first)
+ENRICH_PASS1_BUDGET_PCT=70
 # Provider orchestration controls (0 disables)
 HUNTER_MAX_CALLS_PER_PAIR=0
 HUNTER_MAX_CALLS_PER_RUN=0
