@@ -133,6 +133,10 @@ NON_BUSINESS_TEXT_HINTS = [
 ]
 
 
+def sanitize_for_filename(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", str(value).strip()).strip("_")
+
+
 def _cache_path(prefix: str, key: str) -> str:
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return os.path.join(CACHE_DIR, f"{prefix}_{digest}.json")
@@ -549,8 +553,8 @@ def discover(service: str, town: str):
         print(f"[DISCOVERY] {service.title()} | {town.title()} – Scanning...")
 
         # Safe filenames
-        safe_city = re.sub(r'[^A-Za-z0-9_]+', '_', town.strip())
-        safe_service = re.sub(r'[^A-Za-z0-9_]+', '_', service.strip())
+        safe_city = sanitize_for_filename(town)
+        safe_service = sanitize_for_filename(service)
         today = date.today().strftime("%Y-%m-%d")
 
         out_path = os.path.join(

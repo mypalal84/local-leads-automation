@@ -107,6 +107,37 @@ def test_discover_writes_filtered_output(tmp_path, monkeypatch):
     assert df.iloc[0]["name"] == "Good Lead"
 
 
+def test_sanitize_for_filename_trims_extra_underscores(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    module = load_discover_module(home)
+
+    assert module.sanitize_for_filename("Catering (small local)") == "Catering_small_local"
+
+
+def test_discover_filename_has_no_double_underscore_before_no_website(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DISCOVERY_PROVIDER", "serper")
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_serper_search", lambda _q: [
+        {
+            "title": "One Lead",
+            "link": "https://example.com",
+            "snippet": "Local business",
+        },
+    ])
+    monkeypatch.setattr(module, "is_probably_real_website", lambda _link, _name="": False)
+
+    out_path = module.discover("Catering (small local)", "Chandler, AZ")
+    assert out_path is not None
+    out_name = pathlib.Path(out_path).name
+    assert "_NO_WEBSITE_" in out_name
+    assert "__NO_WEBSITE_" not in out_name
+
+
 def test_discover_removes_stale_output_when_no_leads(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
