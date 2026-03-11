@@ -304,6 +304,17 @@ def test_append_to_suppressions_is_idempotent(tmp_path, monkeypatch):
     assert rows[0][0] == "same@example.com"
 
 
+def test_append_to_suppressions_skips_exempt_addresses(tmp_path, monkeypatch):
+    suppressions = pathlib.Path(tmp_path) / "suppressions.csv"
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(suppressions))
+    monkeypatch.setattr(sce, "SUPPRESSION_EXEMPT_EMAILS", {"alex@zbadigital.com"})
+
+    added = sce.append_to_suppressions("alex@zbadigital.com", reason="negative_reply")
+
+    assert added is False
+    assert not suppressions.exists()
+
+
 def test_load_hard_bounce_domain_blocklist_counts_only_hard_bounces(tmp_path, monkeypatch):
     suppressions = pathlib.Path(tmp_path) / "suppressions.csv"
     with open(suppressions, "w", newline="", encoding="utf-8") as f:

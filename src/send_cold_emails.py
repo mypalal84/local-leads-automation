@@ -75,6 +75,23 @@ DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", 
 SKIP_REPLY_CHECK_CLEANUP = os.getenv("SKIP_REPLY_CHECK_CLEANUP", "false").strip().lower() in {"1", "true", "yes", "on"}
 HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD = max(0, int(os.getenv("HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD", "0")))
 AUTO_SUPPRESS_UNKNOWN_BOUNCES = os.getenv("AUTO_SUPPRESS_UNKNOWN_BOUNCES", "false").strip().lower() in {"1", "true", "yes", "on"}
+SUPPRESSION_EXEMPT_EMAILS = {
+    addr.strip().lower()
+    for addr in [
+        EMAIL_ADDR,
+        REPLY_NOTIFY_TO,
+        os.getenv("EMAIL_USER", ""),
+        os.getenv("DAILY_LEAD_EMAIL_TO", ""),
+    ]
+    if (addr or "").strip()
+}
+SUPPRESSION_EXEMPT_EMAILS.update(
+    {
+        addr.strip().lower()
+        for addr in os.getenv("SUPPRESSION_EXEMPT_EMAILS_EXTRA", "").split(",")
+        if addr.strip()
+    }
+)
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If this isn't relevant, reply STOP and I'll remove you from future emails.",
@@ -319,12 +336,15 @@ def load_suppression_list():
 def append_to_suppressions(email_addr, reason="manual"):
     email_addr = (email_addr or "").strip().lower()
     if not email_addr:
-        return
+        return False
+    if email_addr in SUPPRESSION_EXEMPT_EMAILS:
+        return False
     existing = load_suppression_list()
     if email_addr in existing:
-        return
+        return False
     with open(SUPPRESSIONS_FILE, "a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([email_addr, reason, datetime.now().isoformat(timespec="seconds")])
+    return True
 
 
 def load_hard_bounce_domain_blocklist(threshold):
@@ -687,11 +707,17 @@ def handle_bounce_event(bounced_email, bounce_type, seen_bounce_events=None):
         seen_bounce_events.add(event_key)
 
     if bounce_type == "hard":
-        append_to_suppressions(bounced_email, reason="delivery_failure_hard")
-        print(f"[BOUNCE] Hard bounce suppressed: {bounced_email}")
+        added = append_to_suppressions(bounced_email, reason="delivery_failure_hard")
+        if added is not False:
+            print(f"[BOUNCE] Hard bounce suppressed: {bounced_email}")
+        else:
+            print(f"[BOUNCE] Hard bounce detected: {bounced_email} (suppression skipped)")
     elif bounce_type == "unknown" and AUTO_SUPPRESS_UNKNOWN_BOUNCES:
-        append_to_suppressions(bounced_email, reason="delivery_failure_unknown")
-        print(f"[BOUNCE] Unknown bounce suppressed: {bounced_email}")
+        added = append_to_suppressions(bounced_email, reason="delivery_failure_unknown")
+        if added is not False:
+            print(f"[BOUNCE] Unknown bounce suppressed: {bounced_email}")
+        else:
+            print(f"[BOUNCE] unknown bounce detected: {bounced_email} (suppression skipped)")
     else:
         print(f"[BOUNCE] {bounce_type} bounce detected: {bounced_email} (not auto-suppressed)")
     return True
@@ -1437,8 +1463,10 @@ def fetch_replies():
                     date = msg.get("Date", "")
                     writer.writerow([frm, subject, compact_body[:150], date])
                     replied_addresses.add(reply_email)
-                    append_to_suppressions(reply_email, reason="negative_reply")
-                    print(f"[SUPPRESS] Added from negative reply: {reply_email}")
+                    if append_to_suppressions(reply_email, reason="negative_reply"):
+                        print(f"[SUPPRESS] Added from negative reply: {reply_email}")
+                    else:
+                        print(f"[SUPPRESS] Skipped exempt/duplicate negative reply: {reply_email}")
                     continue
 
                 if any(tok in subject.lower() for tok in ["question", "website", "mobile site", "call"]):
