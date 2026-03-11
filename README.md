@@ -82,8 +82,12 @@ REPLY_NOTIFY_TO="your_notification_address@gmail.com"
 # Pipeline controls
 DAILY_EMAIL_TARGET=50
 ENRICH_BUFFER_MULTIPLIER=2
+# Hard cap per pair after budget slicing (0 disables cap)
+MAX_ENRICH_LEADS_PER_PAIR=0
 EXPECTED_SENDS_PER_PAIR=5
 MAX_PAIRS_PER_RUN=15
+# Stop run after N consecutive pairs with zero sends (0 disables)
+ZERO_SEND_STREAK_STOP=0
 LEAD_SCORE_THRESHOLD=2
 PRE_ENRICH_SCORE_FILTER=true
 STARTUP_PRIORITY=false

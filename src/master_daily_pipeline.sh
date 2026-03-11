@@ -92,8 +92,10 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 
 : "${DAILY_EMAIL_TARGET:=50}"
 : "${ENRICH_BUFFER_MULTIPLIER:=2}"
+: "${MAX_ENRICH_LEADS_PER_PAIR:=0}"
 : "${EXPECTED_SENDS_PER_PAIR:=5}"
 : "${MAX_PAIRS_PER_RUN:=15}"
+: "${ZERO_SEND_STREAK_STOP:=0}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
 : "${LOG_ARCHIVE_RETENTION_DAYS:=60}"
 : "${DRY_RUN:=false}"
@@ -287,6 +289,14 @@ today_sent_count() {
   fi
 }
 
+run_sent_count() {
+  if [[ -f "$LOG_DIR/email.log" ]]; then
+    grep -c "\[SENT\]" "$LOG_DIR/email.log" 2>/dev/null || true
+  else
+    echo 0
+  fi
+}
+
 # Services ------------------------------------------------------------
 SERVICES=(
 "Plumbers" "Roofers" "Electricians" "Contractors / General Contractors"
@@ -378,6 +388,12 @@ fi
 if (( MAX_PAIRS_PER_RUN < 1 )); then
   MAX_PAIRS_PER_RUN=1
 fi
+if (( MAX_ENRICH_LEADS_PER_PAIR < 0 )); then
+  MAX_ENRICH_LEADS_PER_PAIR=0
+fi
+if (( ZERO_SEND_STREAK_STOP < 0 )); then
+  ZERO_SEND_STREAK_STOP=0
+fi
 
 target_pairs=$(( (remaining_at_start + EXPECTED_SENDS_PER_PAIR - 1) / EXPECTED_SENDS_PER_PAIR ))
 if (( target_pairs < 1 )); then
@@ -433,7 +449,11 @@ DELAY_BETWEEN_RUNS="${PIPELINE_DELAY_BETWEEN_RUNS:-${DELAY_BETWEEN_RUNS:-60}}"
 log "[RUNTIME] PYTHON_BIN=$PYTHON_BIN" | tee -a "$LOG_DIR/summary.log"
 log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
+log "[LIMIT] MAX_ENRICH_LEADS_PER_PAIR=$MAX_ENRICH_LEADS_PER_PAIR" | tee -a "$LOG_DIR/summary.log"
+log "[LIMIT] ZERO_SEND_STREAK_STOP=$ZERO_SEND_STREAK_STOP" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair=$EXPECTED_SENDS_PER_PAIR, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
+
+zero_send_streak=0
 
 while IFS='|' read -r service city; do
   sent_today=$(today_sent_count)
@@ -475,10 +495,14 @@ while IFS='|' read -r service city; do
     fi
     quota_slice=$(( (remaining_quota + pairs_remaining - 1) / pairs_remaining ))
     enrich_limit=$((quota_slice * ENRICH_BUFFER_MULTIPLIER))
+    enrich_limit_uncapped=$enrich_limit
     if (( enrich_limit < 1 )); then
       enrich_limit=1
     fi
-    log "[BUDGET] remaining_quota=$remaining_quota, pairs_remaining=$pairs_remaining, quota_slice=$quota_slice, enrich_limit=$enrich_limit" | tee -a "$LOG_DIR/summary.log"
+    if (( MAX_ENRICH_LEADS_PER_PAIR > 0 && enrich_limit > MAX_ENRICH_LEADS_PER_PAIR )); then
+      enrich_limit=$MAX_ENRICH_LEADS_PER_PAIR
+    fi
+    log "[BUDGET] remaining_quota=$remaining_quota, pairs_remaining=$pairs_remaining, quota_slice=$quota_slice, enrich_limit=$enrich_limit (uncapped=$enrich_limit_uncapped)" | tee -a "$LOG_DIR/summary.log"
     if ! "$PYTHON_BIN" "$SRC_DIR/find_no_website_emails.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
       step_finished_epoch="$(date +%s)"
       ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
@@ -501,6 +525,7 @@ while IFS='|' read -r service city; do
   # Step 3: Outreach
   log "[INFO] Starting outreach for $service | $city" | tee -a "$LOG_DIR/email.log"
   step_started_epoch="$(date +%s)"
+  sent_before_pair=$(run_sent_count)
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping outreach command for $OUT_FILE" | tee -a "$LOG_DIR/email.log"
   else
@@ -508,8 +533,28 @@ while IFS='|' read -r service city; do
       log "[ERR] Email send failed for $service | $city" | tee -a "$LOG_DIR/email.log"
     fi
   fi
+  sent_after_pair=$(run_sent_count)
+  pair_sent_delta=$((sent_after_pair - sent_before_pair))
+  if (( pair_sent_delta < 0 )); then
+    pair_sent_delta=0
+  fi
   step_finished_epoch="$(date +%s)"
   OUTREACH_DURATION_SEC=$((OUTREACH_DURATION_SEC + step_finished_epoch - step_started_epoch))
+
+  log "[PAIR-RESULT] sent_delta=$pair_sent_delta for $service | $city" | tee -a "$LOG_DIR/summary.log"
+  if [[ "$DRY_RUN" == "false" ]]; then
+    if (( pair_sent_delta <= 0 )); then
+      zero_send_streak=$((zero_send_streak + 1))
+      log "[PAIR-RESULT] zero_send_streak=$zero_send_streak" | tee -a "$LOG_DIR/summary.log"
+    else
+      zero_send_streak=0
+    fi
+
+    if (( ZERO_SEND_STREAK_STOP > 0 && zero_send_streak >= ZERO_SEND_STREAK_STOP )); then
+      log "[LIMIT] Zero-send streak reached ($zero_send_streak). Stopping remaining pairs." | tee -a "$LOG_DIR/summary.log"
+      break
+    fi
+  fi
 
   log "--- Sleeping ${DELAY_BETWEEN_RUNS}s ---" | tee -a "$LOG_DIR/summary.log"
   sleep "$DELAY_BETWEEN_RUNS"
