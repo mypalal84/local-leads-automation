@@ -315,6 +315,21 @@ def test_append_to_suppressions_skips_exempt_addresses(tmp_path, monkeypatch):
     assert not suppressions.exists()
 
 
+def test_should_ignore_reply_message_for_internal_sender(monkeypatch):
+    monkeypatch.setattr(sce, "INTERNAL_REPLY_IGNORE_EMAILS", {"alex@zbadigital.com"})
+    assert sce.should_ignore_reply_message("alex@zbadigital.com", "Re: hi") is True
+
+
+def test_should_ignore_reply_message_for_pipeline_subject(monkeypatch):
+    monkeypatch.setattr(sce, "INTERNAL_REPLY_IGNORE_EMAILS", set())
+    assert sce.should_ignore_reply_message("someone@example.com", "[Pipeline] 1 new replies") is True
+
+
+def test_should_not_ignore_regular_reply_message(monkeypatch):
+    monkeypatch.setattr(sce, "INTERNAL_REPLY_IGNORE_EMAILS", {"alex@zbadigital.com"})
+    assert sce.should_ignore_reply_message("owner@acme.com", "Re: Quick question") is False
+
+
 def test_load_hard_bounce_domain_blocklist_counts_only_hard_bounces(tmp_path, monkeypatch):
     suppressions = pathlib.Path(tmp_path) / "suppressions.csv"
     with open(suppressions, "w", newline="", encoding="utf-8") as f:

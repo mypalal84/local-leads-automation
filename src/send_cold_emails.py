@@ -92,6 +92,8 @@ SUPPRESSION_EXEMPT_EMAILS.update(
         if addr.strip()
     }
 )
+INTERNAL_REPLY_IGNORE_EMAILS = set(SUPPRESSION_EXEMPT_EMAILS)
+PIPELINE_NOTIFICATION_SUBJECT_PREFIX = "[pipeline]"
 UNSUBSCRIBE_FOOTER = os.getenv(
     "UNSUBSCRIBE_FOOTER",
     "If this isn't relevant, reply STOP and I'll remove you from future emails.",
@@ -578,6 +580,19 @@ def is_negative_reply_text(subject, body_text):
     excerpt = extract_reply_excerpt(body_text)
     combined = f"{subject or ''} {excerpt}".lower()
     return any(keyword in combined for keyword in NEGATIVE_REPLY_KEYWORDS)
+
+
+def should_ignore_reply_message(reply_email, subject):
+    reply_email = (reply_email or "").strip().lower()
+    subject_lower = (subject or "").strip().lower()
+
+    if reply_email and reply_email in INTERNAL_REPLY_IGNORE_EMAILS:
+        return True
+
+    if subject_lower.startswith(PIPELINE_NOTIFICATION_SUBJECT_PREFIX):
+        return True
+
+    return False
 
 
 def is_valid_email_syntax(email_addr):
@@ -1457,6 +1472,8 @@ def fetch_replies():
                     append_processed_message_id(message_id)
 
                 reply_email = extract_email_address(frm)
+                if should_ignore_reply_message(reply_email, subject):
+                    continue
                 is_negative = bool(reply_email and is_negative_reply_text(subject, body))
 
                 if is_negative:
