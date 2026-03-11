@@ -693,6 +693,23 @@ readarray -t SHUF_SERVICES < <(printf "%s\n" "${SERVICES[@]}" | sort -R)
 readarray -t SHUF_CITIES   < <(printf "%s\n" "${CITIES[@]}"   | sort -R)
 SEL_SERVICES=("${SHUF_SERVICES[@]:0:$pair_count}")
 SEL_CITIES=("${SHUF_CITIES[@]:0:$pair_count}")
+NEXT_REPLACEMENT_PAIR_INDEX=$pair_count
+
+next_replacement_pair() {
+  local max_pairs=${#SHUF_SERVICES[@]}
+  if (( ${#SHUF_CITIES[@]} < max_pairs )); then
+    max_pairs=${#SHUF_CITIES[@]}
+  fi
+  if (( NEXT_REPLACEMENT_PAIR_INDEX >= max_pairs )); then
+    return 1
+  fi
+
+  local replacement_service="${SHUF_SERVICES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
+  local replacement_city="${SHUF_CITIES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
+  NEXT_REPLACEMENT_PAIR_INDEX=$((NEXT_REPLACEMENT_PAIR_INDEX + 1))
+  echo "${replacement_service}|${replacement_city}"
+  return 0
+}
 
 echo "=== Today's Random Selections ===" | tee -a "$LOG_DIR/summary.log"
 
@@ -733,16 +750,20 @@ log "[SCHED] ADAPTIVE_PAIR_SCHEDULING=$ADAPTIVE_PAIR_SCHEDULING, lookback=$ADAPT
 log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair_base=$EXPECTED_SENDS_PER_PAIR, expected_per_pair_effective=$effective_expected_sends_per_pair, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
 
 zero_send_streak=0
+stop_pipeline="false"
 
 while IFS='|' read -r service city; do
+  COUNT=$((COUNT + 1))
+  pair_completed="false"
+  while [[ "$pair_completed" != "true" ]]; do
   sent_today=$(today_sent_count)
   remaining_quota=$((DAILY_EMAIL_TARGET - sent_today))
   if (( remaining_quota <= 0 )); then
     log "[LIMIT] Daily target reached ($sent_today/$DAILY_EMAIL_TARGET). Stopping remaining pairs." | tee -a "$LOG_DIR/summary.log"
+    stop_pipeline="true"
     break
   fi
 
-  ((COUNT++))
   log "--- [$COUNT/$TOTAL] $service | $city ---" | tee -a "$LOG_DIR/summary.log"
   log "[LIMIT] Remaining daily quota before pair: $remaining_quota" | tee -a "$LOG_DIR/summary.log"
 
@@ -756,7 +777,17 @@ while IFS='|' read -r service city; do
       step_finished_epoch="$(date +%s)"
       DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
-      sleep "$DELAY_BETWEEN_RUNS"; continue
+      replacement_pair="$(next_replacement_pair || true)"
+      if [[ -n "$replacement_pair" ]]; then
+        IFS='|' read -r replacement_service replacement_city <<< "$replacement_pair"
+        log "[RECOVER] Replacing failed pair with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
+        service="$replacement_service"
+        city="$replacement_city"
+        continue
+      fi
+      sleep "$DELAY_BETWEEN_RUNS"
+      pair_completed="true"
+      continue
     fi
   fi
   step_finished_epoch="$(date +%s)"
@@ -786,7 +817,17 @@ while IFS='|' read -r service city; do
       step_finished_epoch="$(date +%s)"
       ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
-      sleep "$DELAY_BETWEEN_RUNS"; continue
+      replacement_pair="$(next_replacement_pair || true)"
+      if [[ -n "$replacement_pair" ]]; then
+        IFS='|' read -r replacement_service replacement_city <<< "$replacement_pair"
+        log "[RECOVER] Replacing failed pair with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
+        service="$replacement_service"
+        city="$replacement_city"
+        continue
+      fi
+      sleep "$DELAY_BETWEEN_RUNS"
+      pair_completed="true"
+      continue
     fi
   fi
   step_finished_epoch="$(date +%s)"
@@ -798,7 +839,17 @@ while IFS='|' read -r service city; do
   OUT_FILE="$DATA_DIR/leads_${FILE_TAG}_NO_WEBSITE_$(date +%Y-%m-%d).csv"
   if [[ "$DRY_RUN" == "false" && ! -f "$OUT_FILE" ]]; then
     log "[WARN] No enriched file found -> $OUT_FILE" | tee -a "$LOG_DIR/summary.log"
-    sleep "$DELAY_BETWEEN_RUNS"; continue
+    replacement_pair="$(next_replacement_pair || true)"
+    if [[ -n "$replacement_pair" ]]; then
+      IFS='|' read -r replacement_service replacement_city <<< "$replacement_pair"
+      log "[RECOVER] Replacing no-output pair with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
+      service="$replacement_service"
+      city="$replacement_city"
+      continue
+    fi
+    sleep "$DELAY_BETWEEN_RUNS"
+    pair_completed="true"
+    continue
   fi
 
   # Step 3: Outreach
@@ -837,6 +888,12 @@ while IFS='|' read -r service city; do
 
   log "--- Sleeping ${DELAY_BETWEEN_RUNS}s ---" | tee -a "$LOG_DIR/summary.log"
   sleep "$DELAY_BETWEEN_RUNS"
+  pair_completed="true"
+  done
+
+  if [[ "$stop_pipeline" == "true" ]]; then
+    break
+  fi
 done < "$PAIR_FILE"
 
 rm -f "$PAIR_FILE"
