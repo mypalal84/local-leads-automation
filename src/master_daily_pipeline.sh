@@ -99,6 +99,18 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR:=2}"
 : "${ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR:=8}"
 : "${ADAPTIVE_SAFETY_FACTOR:=1.0}"
+: "${AUTO_TUNE_ENABLED:=false}"
+: "${AUTO_TUNE_LOOKBACK_RUNS:=3}"
+: "${AUTO_TUNE_MIN_RUNS:=3}"
+: "${AUTO_TUNE_TARGET_EMAILS_PER_API_CALL:=0.06}"
+: "${AUTO_TUNE_EFFICIENCY_HYSTERESIS:=0.01}"
+: "${AUTO_TUNE_LEAD_SCORE_MIN:=2}"
+: "${AUTO_TUNE_LEAD_SCORE_MAX:=4}"
+: "${AUTO_TUNE_HUNTER_MAX_CALLS_PER_PAIR_MIN:=2}"
+: "${AUTO_TUNE_HUNTER_MAX_CALLS_PER_PAIR_MAX:=6}"
+: "${AUTO_TUNE_ENRICH_PASS1_BUDGET_MIN:=60}"
+: "${AUTO_TUNE_ENRICH_PASS1_BUDGET_MAX:=90}"
+: "${AUTO_TUNE_ENRICH_PASS1_STEP:=5}"
 : "${MAX_PAIRS_PER_RUN:=15}"
 : "${ZERO_SEND_STREAK_STOP:=0}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
@@ -123,6 +135,11 @@ if [[ "$ADAPTIVE_PAIR_SCHEDULING" == "1" || "$ADAPTIVE_PAIR_SCHEDULING" == "true
   ADAPTIVE_PAIR_SCHEDULING="true"
 else
   ADAPTIVE_PAIR_SCHEDULING="false"
+fi
+if [[ "$AUTO_TUNE_ENABLED" == "1" || "$AUTO_TUNE_ENABLED" == "true" || "$AUTO_TUNE_ENABLED" == "yes" ]]; then
+  AUTO_TUNE_ENABLED="true"
+else
+  AUTO_TUNE_ENABLED="false"
 fi
 shopt -u nocasematch
 
@@ -395,6 +412,162 @@ PY
   echo "$computed"
 }
 
+apply_closed_loop_autotune() {
+  local history_csv="$RUN_METRICS_DIR/history.csv"
+  if [[ "$AUTO_TUNE_ENABLED" != "true" ]]; then
+    return
+  fi
+
+  if ! [[ "$LEAD_SCORE_THRESHOLD" =~ ^[0-9]+$ ]]; then
+    LEAD_SCORE_THRESHOLD=2
+  fi
+  if ! [[ "${HUNTER_MAX_CALLS_PER_PAIR:-0}" =~ ^[0-9]+$ ]] || (( HUNTER_MAX_CALLS_PER_PAIR < 0 )); then
+    HUNTER_MAX_CALLS_PER_PAIR=0
+  fi
+  if ! [[ "${ENRICH_PASS1_BUDGET_PCT:-0}" =~ ^[0-9]+$ ]] || (( ENRICH_PASS1_BUDGET_PCT < 0 )); then
+    ENRICH_PASS1_BUDGET_PCT=70
+  fi
+
+  local tune_result
+  tune_result=$(HISTORY_CSV="$history_csv" \
+    LOOKBACK="$AUTO_TUNE_LOOKBACK_RUNS" \
+    MIN_RUNS="$AUTO_TUNE_MIN_RUNS" \
+    TARGET_EPA="$AUTO_TUNE_TARGET_EMAILS_PER_API_CALL" \
+    HYSTERESIS="$AUTO_TUNE_EFFICIENCY_HYSTERESIS" \
+    CUR_LEAD="$LEAD_SCORE_THRESHOLD" \
+    CUR_HUNTER_PAIR_MAX="$HUNTER_MAX_CALLS_PER_PAIR" \
+    CUR_PASS1="$ENRICH_PASS1_BUDGET_PCT" \
+    LEAD_MIN="$AUTO_TUNE_LEAD_SCORE_MIN" \
+    LEAD_MAX="$AUTO_TUNE_LEAD_SCORE_MAX" \
+    HUNTER_MIN="$AUTO_TUNE_HUNTER_MAX_CALLS_PER_PAIR_MIN" \
+    HUNTER_MAX="$AUTO_TUNE_HUNTER_MAX_CALLS_PER_PAIR_MAX" \
+    PASS1_MIN="$AUTO_TUNE_ENRICH_PASS1_BUDGET_MIN" \
+    PASS1_MAX="$AUTO_TUNE_ENRICH_PASS1_BUDGET_MAX" \
+    PASS1_STEP="$AUTO_TUNE_ENRICH_PASS1_STEP" \
+    "$PYTHON_BIN" - <<'PY'
+import csv
+import os
+
+def as_int(name, default):
+    try:
+        return int(float(os.getenv(name, str(default)) or default))
+    except Exception:
+        return int(default)
+
+def as_float(name, default):
+    try:
+        return float(os.getenv(name, str(default)) or default)
+    except Exception:
+        return float(default)
+
+path = os.getenv("HISTORY_CSV", "")
+lookback = max(1, as_int("LOOKBACK", 3))
+min_runs = max(1, as_int("MIN_RUNS", 3))
+target_epa = max(0.001, as_float("TARGET_EPA", 0.06))
+hysteresis = max(0.0, as_float("HYSTERESIS", 0.01))
+
+cur_lead = max(1, as_int("CUR_LEAD", 2))
+cur_hunter = max(0, as_int("CUR_HUNTER_PAIR_MAX", 0))
+cur_pass1 = max(0, as_int("CUR_PASS1", 70))
+
+lead_min = max(1, as_int("LEAD_MIN", 2))
+lead_max = max(lead_min, as_int("LEAD_MAX", 4))
+hunter_min = max(0, as_int("HUNTER_MIN", 2))
+hunter_max = max(hunter_min, as_int("HUNTER_MAX", 6))
+pass1_min = max(0, as_int("PASS1_MIN", 60))
+pass1_max = max(pass1_min, as_int("PASS1_MAX", 90))
+pass1_step = max(1, as_int("PASS1_STEP", 5))
+
+rows = []
+if path and os.path.isfile(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            dry = str((row or {}).get("dry_run", "")).strip().lower()
+            if dry in {"true", "1", "yes"}:
+                continue
+            try:
+                sent = int(float((row or {}).get("sent_in_run", 0) or 0))
+                epa = float((row or {}).get("emails_per_api_call", 0) or 0)
+            except Exception:
+                continue
+            rows.append((sent, epa))
+
+rows = rows[-lookback:]
+if len(rows) < min_runs:
+    print(f"status=insufficient|samples={len(rows)}|avg_sent=0.000|avg_epa=0.000|target_epa={target_epa:.3f}|action=hold|lead={cur_lead}|hunter={cur_hunter}|pass1={cur_pass1}")
+    raise SystemExit
+
+avg_sent = sum(s for s, _ in rows) / len(rows)
+avg_epa = sum(e for _, e in rows) / len(rows)
+lower = target_epa - hysteresis
+upper = target_epa + hysteresis
+
+action = "hold"
+new_lead = cur_lead
+new_hunter = cur_hunter
+new_pass1 = cur_pass1
+
+if avg_epa < lower:
+    action = "loosen"
+    new_lead = max(lead_min, cur_lead - 1)
+    new_hunter = min(hunter_max, cur_hunter + 1)
+    new_pass1 = min(pass1_max, cur_pass1 + pass1_step)
+elif avg_epa > upper:
+    action = "tighten"
+    new_lead = min(lead_max, cur_lead + 1)
+    new_hunter = max(hunter_min, cur_hunter - 1)
+    new_pass1 = max(pass1_min, cur_pass1 - pass1_step)
+
+print(
+    f"status=ok|samples={len(rows)}|avg_sent={avg_sent:.3f}|avg_epa={avg_epa:.3f}|target_epa={target_epa:.3f}|"
+    f"action={action}|lead={new_lead}|hunter={new_hunter}|pass1={new_pass1}"
+)
+PY
+)
+
+  local status=""
+  local samples=""
+  local avg_sent=""
+  local avg_epa=""
+  local target_epa=""
+  local action=""
+  local new_lead="$LEAD_SCORE_THRESHOLD"
+  local new_hunter="$HUNTER_MAX_CALLS_PER_PAIR"
+  local new_pass1="$ENRICH_PASS1_BUDGET_PCT"
+
+  IFS='|' read -r -a tune_parts <<< "$tune_result"
+  for part in "${tune_parts[@]}"; do
+    case "$part" in
+      status=*) status="${part#status=}" ;;
+      samples=*) samples="${part#samples=}" ;;
+      avg_sent=*) avg_sent="${part#avg_sent=}" ;;
+      avg_epa=*) avg_epa="${part#avg_epa=}" ;;
+      target_epa=*) target_epa="${part#target_epa=}" ;;
+      action=*) action="${part#action=}" ;;
+      lead=*) new_lead="${part#lead=}" ;;
+      hunter=*) new_hunter="${part#hunter=}" ;;
+      pass1=*) new_pass1="${part#pass1=}" ;;
+    esac
+  done
+
+  if [[ "$status" == "insufficient" ]]; then
+    log "[AUTO-TUNE] Skipped: insufficient history samples ($samples/$AUTO_TUNE_MIN_RUNS)." | tee -a "$LOG_DIR/summary.log"
+    return
+  fi
+
+  local old_lead="$LEAD_SCORE_THRESHOLD"
+  local old_hunter="$HUNTER_MAX_CALLS_PER_PAIR"
+  local old_pass1="$ENRICH_PASS1_BUDGET_PCT"
+
+  LEAD_SCORE_THRESHOLD="$new_lead"
+  HUNTER_MAX_CALLS_PER_PAIR="$new_hunter"
+  ENRICH_PASS1_BUDGET_PCT="$new_pass1"
+
+  log "[AUTO-TUNE] action=$action samples=$samples avg_sent=$avg_sent avg_epa=$avg_epa target_epa=$target_epa" | tee -a "$LOG_DIR/summary.log"
+  log "[AUTO-TUNE] LEAD_SCORE_THRESHOLD: $old_lead -> $LEAD_SCORE_THRESHOLD | HUNTER_MAX_CALLS_PER_PAIR: $old_hunter -> $HUNTER_MAX_CALLS_PER_PAIR | ENRICH_PASS1_BUDGET_PCT: $old_pass1 -> $ENRICH_PASS1_BUDGET_PCT" | tee -a "$LOG_DIR/summary.log"
+}
+
 # Services ------------------------------------------------------------
 SERVICES=(
 "Plumbers" "Roofers" "Electricians" "Contractors / General Contractors"
@@ -474,6 +647,8 @@ CITIES=(
 )
 
 # Random selection ----------------------------------------------------
+apply_closed_loop_autotune
+
 sent_today_start=$(today_sent_count)
 remaining_at_start=$((DAILY_EMAIL_TARGET - sent_today_start))
 if (( remaining_at_start < 0 )); then
