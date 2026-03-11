@@ -108,6 +108,13 @@ STARTUP_EXCLUDE_TECH=true
 # STARTUP_TECH_EXCLUDE_KEYWORDS=saas,software,app,platform,ai,ml,machine learning,cloud,devops,fintech,edtech,martech
 CACHE_TTL_DAYS=7
 CACHE_MAX_MB=256
+HUNTER_MAX_DOMAINS_PER_LEAD=1
+# Provider orchestration controls (0 disables)
+HUNTER_MAX_CALLS_PER_PAIR=0
+HUNTER_MAX_CALLS_PER_RUN=0
+# Pause Hunter in-pair when hit rate is weak (0 disables pause logic)
+HUNTER_MIN_CALLS_BEFORE_PAUSE=3
+HUNTER_MIN_HIT_RATE=0
 GOOGLE_DISCOVERY_SEARCH_CALLS=4
 GOOGLE_DISCOVERY_TARGET_LEADS=12
 GOOGLE_DETAILS_FALLBACK_LIMIT=8
