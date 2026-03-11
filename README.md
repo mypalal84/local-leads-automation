@@ -85,6 +85,13 @@ ENRICH_BUFFER_MULTIPLIER=2
 # Hard cap per pair after budget slicing (0 disables cap)
 MAX_ENRICH_LEADS_PER_PAIR=0
 EXPECTED_SENDS_PER_PAIR=5
+# When true, derive expected sends/pair from recent non-dry run history.
+ADAPTIVE_PAIR_SCHEDULING=false
+ADAPTIVE_LOOKBACK_RUNS=5
+ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR=2
+ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR=8
+# Multiply observed recent sends/pair before clamping (1.0 keeps raw average)
+ADAPTIVE_SAFETY_FACTOR=1.0
 MAX_PAIRS_PER_RUN=15
 # Stop run after N consecutive pairs with zero sends (0 disables)
 ZERO_SEND_STREAK_STOP=0
@@ -230,6 +237,7 @@ Current opener behavior:
 - 💸 Quota-aware enrichment to reduce API usage (`ENRICH_BUFFER_MULTIPLIER`)
 - 🧩 Per-pair enrichment quota slicing (prevents one pair from consuming full remaining budget)
 - 📊 Dynamic pair scheduling (`EXPECTED_SENDS_PER_PAIR`, `MAX_PAIRS_PER_RUN`)
+- 📉 Adaptive pair scheduling from recent run history (`ADAPTIVE_PAIR_SCHEDULING`)
 - ✅ Lead quality gate before send (`LEAD_SCORE_THRESHOLD`)
 - 🧮 Pre-enrich score floor to avoid low-probability API calls (`PRE_ENRICH_SCORE_FILTER`)
 - 🚦 Existing-website rows are skipped before enrichment API calls

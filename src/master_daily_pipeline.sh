@@ -94,6 +94,11 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${ENRICH_BUFFER_MULTIPLIER:=2}"
 : "${MAX_ENRICH_LEADS_PER_PAIR:=0}"
 : "${EXPECTED_SENDS_PER_PAIR:=5}"
+: "${ADAPTIVE_PAIR_SCHEDULING:=false}"
+: "${ADAPTIVE_LOOKBACK_RUNS:=5}"
+: "${ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR:=2}"
+: "${ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR:=8}"
+: "${ADAPTIVE_SAFETY_FACTOR:=1.0}"
 : "${MAX_PAIRS_PER_RUN:=15}"
 : "${ZERO_SEND_STREAK_STOP:=0}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
@@ -113,6 +118,11 @@ if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "yes" ]]; then
   DRY_RUN="true"
 else
   DRY_RUN="false"
+fi
+if [[ "$ADAPTIVE_PAIR_SCHEDULING" == "1" || "$ADAPTIVE_PAIR_SCHEDULING" == "true" || "$ADAPTIVE_PAIR_SCHEDULING" == "yes" ]]; then
+  ADAPTIVE_PAIR_SCHEDULING="true"
+else
+  ADAPTIVE_PAIR_SCHEDULING="false"
 fi
 shopt -u nocasematch
 
@@ -297,6 +307,88 @@ run_sent_count() {
   fi
 }
 
+adaptive_expected_sends_per_pair() {
+  local fallback="$1"
+  local history_csv="$RUN_METRICS_DIR/history.csv"
+
+  if [[ "$ADAPTIVE_PAIR_SCHEDULING" != "true" ]]; then
+    echo "$fallback"
+    return
+  fi
+
+  if ! [[ "$ADAPTIVE_LOOKBACK_RUNS" =~ ^[0-9]+$ ]] || (( ADAPTIVE_LOOKBACK_RUNS < 1 )); then
+    ADAPTIVE_LOOKBACK_RUNS=5
+  fi
+  if ! [[ "$ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR" =~ ^[0-9]+$ ]] || (( ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR < 1 )); then
+    ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR=1
+  fi
+  if ! [[ "$ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR" =~ ^[0-9]+$ ]] || (( ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR < ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR )); then
+    ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR=$ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR
+  fi
+
+  if [[ ! -f "$history_csv" ]]; then
+    echo "$fallback"
+    return
+  fi
+
+  local computed
+  computed=$(HISTORY_CSV="$history_csv" LOOKBACK="$ADAPTIVE_LOOKBACK_RUNS" FALLBACK="$fallback" ADAPTIVE_MIN="$ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR" ADAPTIVE_MAX="$ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR" ADAPTIVE_SAFETY_FACTOR="$ADAPTIVE_SAFETY_FACTOR" "$PYTHON_BIN" - <<'PY'
+import csv
+import os
+
+path = os.getenv("HISTORY_CSV", "")
+lookback = int(os.getenv("LOOKBACK", "5") or 5)
+fallback = int(os.getenv("FALLBACK", "5") or 5)
+adaptive_min = int(os.getenv("ADAPTIVE_MIN", "1") or 1)
+adaptive_max = int(os.getenv("ADAPTIVE_MAX", str(adaptive_min)) or adaptive_min)
+try:
+    safety_factor = float(os.getenv("ADAPTIVE_SAFETY_FACTOR", "1.0") or 1.0)
+except Exception:
+    safety_factor = 1.0
+
+rows = []
+if path and os.path.isfile(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            dry = str((row or {}).get("dry_run", "")).strip().lower()
+            if dry in {"true", "1", "yes"}:
+                continue
+            try:
+                pairs = int(float((row or {}).get("pairs_processed", 0) or 0))
+                sent = int(float((row or {}).get("sent_in_run", 0) or 0))
+            except Exception:
+                continue
+            if pairs <= 0:
+                continue
+            rows.append((sent, pairs))
+
+if not rows:
+    print(fallback)
+    raise SystemExit
+
+rows = rows[-max(1, lookback):]
+total_sent = sum(sent for sent, _ in rows)
+total_pairs = sum(pairs for _, pairs in rows)
+if total_pairs <= 0:
+    print(fallback)
+    raise SystemExit
+
+expected = (total_sent / total_pairs) * max(0.1, safety_factor)
+rounded = int(round(expected))
+clamped = max(adaptive_min, min(adaptive_max, rounded))
+print(clamped)
+PY
+)
+
+  if ! [[ "$computed" =~ ^[0-9]+$ ]] || (( computed < 1 )); then
+    echo "$fallback"
+    return
+  fi
+
+  echo "$computed"
+}
+
 # Services ------------------------------------------------------------
 SERVICES=(
 "Plumbers" "Roofers" "Electricians" "Contractors / General Contractors"
@@ -395,7 +487,12 @@ if (( ZERO_SEND_STREAK_STOP < 0 )); then
   ZERO_SEND_STREAK_STOP=0
 fi
 
-target_pairs=$(( (remaining_at_start + EXPECTED_SENDS_PER_PAIR - 1) / EXPECTED_SENDS_PER_PAIR ))
+effective_expected_sends_per_pair="$(adaptive_expected_sends_per_pair "$EXPECTED_SENDS_PER_PAIR")"
+if ! [[ "$effective_expected_sends_per_pair" =~ ^[0-9]+$ ]] || (( effective_expected_sends_per_pair < 1 )); then
+  effective_expected_sends_per_pair="$EXPECTED_SENDS_PER_PAIR"
+fi
+
+target_pairs=$(( (remaining_at_start + effective_expected_sends_per_pair - 1) / effective_expected_sends_per_pair ))
 if (( target_pairs < 1 )); then
   target_pairs=1
 fi
@@ -451,7 +548,8 @@ log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] MAX_ENRICH_LEADS_PER_PAIR=$MAX_ENRICH_LEADS_PER_PAIR" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] ZERO_SEND_STREAK_STOP=$ZERO_SEND_STREAK_STOP" | tee -a "$LOG_DIR/summary.log"
-log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair=$EXPECTED_SENDS_PER_PAIR, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
+log "[SCHED] ADAPTIVE_PAIR_SCHEDULING=$ADAPTIVE_PAIR_SCHEDULING, lookback=$ADAPTIVE_LOOKBACK_RUNS, safety_factor=$ADAPTIVE_SAFETY_FACTOR" | tee -a "$LOG_DIR/summary.log"
+log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair_base=$EXPECTED_SENDS_PER_PAIR, expected_per_pair_effective=$effective_expected_sends_per_pair, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
 
 zero_send_streak=0
 
