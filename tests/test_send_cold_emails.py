@@ -1,5 +1,6 @@
 import csv
 import pathlib
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 
 import pytest
@@ -10,6 +11,7 @@ import send_cold_emails as sce
 @pytest.fixture(autouse=True)
 def _disable_website_guard_by_default(monkeypatch):
     monkeypatch.setattr(sce, "PRE_SEND_WEBSITE_GUARD", False)
+    monkeypatch.setattr(sce, "SEND_QUEUE_PRIORITY_V2_ENABLED", False)
 
 
 class DummySMTP:
@@ -732,6 +734,97 @@ def test_domain_cap_limits_sends_per_domain(tmp_path, monkeypatch):
     sce.send_cold_emails(csv_file=str(csv_path))
 
     assert len(smtp.sent) == 1
+
+
+def test_build_pending_row_preserves_queue_timestamp_and_increments_attempts():
+    fixed_queued_at = "2026-03-01T10:00:00"
+    row = {
+        "emails": "owner@example.com",
+        "__queued_at": fixed_queued_at,
+        "__attempted_sends": "2",
+    }
+
+    pending = sce.build_pending_row(row, source_file="test.csv", town="Austin", service="Plumbing", lead_score=4)
+
+    assert pending["__queued_at"] == fixed_queued_at
+    assert pending["__attempted_sends"] == "3"
+    assert pending["lead_score"] == 4
+
+
+def test_send_queue_priority_v2_uses_age_and_retry_bonus(tmp_path, monkeypatch, capsys):
+    data_dir = pathlib.Path(tmp_path)
+    csv_path = data_dir / "leads_Test_City_TC_Service_NO_WEBSITE_2026-02-26.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes"])
+        writer.writeheader()
+        writer.writerow({"name": "Fresh High", "emails": "fresh@business.com", "website": "", "notes": ""})
+
+    pending_path = data_dir / "pending_leads.csv"
+    old_queue_time = (datetime.now() - timedelta(days=3)).isoformat(timespec="seconds")
+    with open(pending_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "name",
+                "emails",
+                "website",
+                "notes",
+                "__source_file",
+                "__town",
+                "__service",
+                "__queued_at",
+                "__attempted_sends",
+            ],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "Old Pending",
+                "emails": "old@business.com",
+                "website": "",
+                "notes": "",
+                "__source_file": str(csv_path),
+                "__town": "Test City",
+                "__service": "Service",
+                "__queued_at": old_queue_time,
+                "__attempted_sends": "2",
+            }
+        )
+
+    monkeypatch.setattr(sce, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(sce, "SENT_LOG", str(data_dir / "sent_log.csv"))
+    monkeypatch.setattr(sce, "REPLIES_FILE", str(data_dir / "replies.csv"))
+    monkeypatch.setattr(sce, "SUPPRESSIONS_FILE", str(data_dir / "suppressions.csv"))
+    monkeypatch.setattr(sce, "DAILY_SENT_LOG", str(data_dir / "daily_sent_2026-02-26.csv"))
+    monkeypatch.setattr(sce, "PENDING_LEADS_FILE", str(pending_path))
+    monkeypatch.setattr(sce, "DAILY_EMAIL_TARGET", 50)
+    monkeypatch.setattr(sce, "LEAD_SCORE_THRESHOLD", 0)
+    monkeypatch.setattr(sce, "PRE_SEND_VALIDATE_EMAILS", False)
+    monkeypatch.setattr(sce, "MAX_EMAILS_PER_DOMAIN", 99)
+    monkeypatch.setattr(sce, "BLOCK_GENERIC_INBOXES", False)
+    monkeypatch.setattr(sce, "DRY_RUN", True)
+    monkeypatch.setattr(sce, "EMAIL_ADDR", "sender@example.com")
+    monkeypatch.setattr(sce, "EMAIL_PASS", "dummy")
+    monkeypatch.setattr(sce, "SEND_QUEUE_PRIORITY_V2_ENABLED", True)
+    monkeypatch.setattr(sce, "QUEUE_AGE_BONUS_PER_DAY", 0.2)
+    monkeypatch.setattr(sce, "QUEUE_AGE_BONUS_MAX", 2.0)
+    monkeypatch.setattr(sce, "QUEUE_RETRY_BONUS", 0.4)
+    monkeypatch.setattr(sce, "QUEUE_RETRY_BONUS_MAX", 2.0)
+    monkeypatch.setattr(sce, "QUEUE_PRIORITY_LOG_LIMIT", 5)
+    monkeypatch.setattr(
+        sce,
+        "score_lead",
+        lambda _row, email: 3 if email == "old@business.com" else 4,
+    )
+
+    sce.send_cold_emails(csv_file=str(csv_path))
+    out = capsys.readouterr().out
+
+    old_idx = out.index("[DRY-SEND] Old Pending")
+    fresh_idx = out.index("[DRY-SEND] Fresh High")
+    assert old_idx < fresh_idx
+    assert "[QUEUE-V2] #1 old@business.com" in out
 
 
 def test_block_generic_inboxes(tmp_path, monkeypatch):
