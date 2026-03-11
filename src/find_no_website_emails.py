@@ -52,6 +52,26 @@ try:
 except Exception:
     HUNTER_MAX_DOMAINS_PER_LEAD = 1
 
+try:
+    HUNTER_MAX_CALLS_PER_RUN = max(0, int(os.getenv("HUNTER_MAX_CALLS_PER_RUN", "0")))
+except Exception:
+    HUNTER_MAX_CALLS_PER_RUN = 0
+
+try:
+    HUNTER_MAX_CALLS_PER_PAIR = max(0, int(os.getenv("HUNTER_MAX_CALLS_PER_PAIR", "0")))
+except Exception:
+    HUNTER_MAX_CALLS_PER_PAIR = 0
+
+try:
+    HUNTER_MIN_CALLS_BEFORE_PAUSE = max(1, int(os.getenv("HUNTER_MIN_CALLS_BEFORE_PAUSE", "3")))
+except Exception:
+    HUNTER_MIN_CALLS_BEFORE_PAUSE = 3
+
+try:
+    HUNTER_MIN_HIT_RATE = max(0.0, min(1.0, float(os.getenv("HUNTER_MIN_HIT_RATE", "0"))))
+except Exception:
+    HUNTER_MIN_HIT_RATE = 0.0
+
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_DIR = os.path.join(BASE_DIR, "data")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
@@ -77,6 +97,12 @@ RUN_METRICS_TEMPLATE = {
     "serper_latency_ms_sum": 0,
     "serper_latency_ms_count": 0,
     "hunter_calls": 0,
+    "hunter_lookup_attempts": 0,
+    "hunter_viable_hits": 0,
+    "hunter_pair_cap_skips": 0,
+    "hunter_run_cap_skips": 0,
+    "hunter_low_hit_rate_pauses": 0,
+    "hunter_sent": 0,
     "hunter_success": 0,
     "hunter_error": 0,
     "hunter_cache_hit": 0,
@@ -522,6 +548,15 @@ def hunter_email_lookup(domain):
     return result
 
 
+def get_run_hunter_calls() -> int:
+    if not RUN_METRICS_FILE:
+        return 0
+    try:
+        return int(load_run_metrics().get("hunter_calls", 0) or 0)
+    except Exception:
+        return 0
+
+
 def pre_enrich_base_score(row):
     score = 0
     business_val = row.get("name", "")
@@ -633,6 +668,11 @@ def enrich(service, town, max_leads=None):
             df = df.head(max_leads)
 
         enriched, skipped_site, found_emails, skipped_score_floor = [], 0, 0, 0
+        pair_hunter_calls = 0
+        pair_hunter_hits = 0
+        hunter_pair_paused = False
+        hunter_pair_cap_hit = False
+        hunter_run_cap_hit = False
         print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} …")
 
         for _, row in df.iterrows():
@@ -695,9 +735,60 @@ def enrich(service, town, max_leads=None):
                     )
 
             for domain in ([] if confirmed_site else candidate_domains[:HUNTER_MAX_DOMAINS_PER_LEAD]):
+                if hunter_pair_paused or hunter_pair_cap_hit or hunter_run_cap_hit:
+                    break
 
+                if HUNTER_MAX_CALLS_PER_PAIR > 0 and pair_hunter_calls >= HUNTER_MAX_CALLS_PER_PAIR:
+                    hunter_pair_cap_hit = True
+                    increment_metric("hunter_pair_cap_skips")
+                    if DEBUG:
+                        print(
+                            f"[HUNTER-BUDGET] Pair cap reached ({pair_hunter_calls}/"
+                            f"{HUNTER_MAX_CALLS_PER_PAIR}); skipping further Hunter lookups"
+                        )
+                    break
+
+                if HUNTER_MAX_CALLS_PER_RUN > 0 and get_run_hunter_calls() >= HUNTER_MAX_CALLS_PER_RUN:
+                    hunter_run_cap_hit = True
+                    increment_metric("hunter_run_cap_skips")
+                    if DEBUG:
+                        print(
+                            f"[HUNTER-BUDGET] Run cap reached ({get_run_hunter_calls()}/"
+                            f"{HUNTER_MAX_CALLS_PER_RUN}); skipping further Hunter lookups"
+                        )
+                    break
+
+                hunter_calls_before = get_run_hunter_calls()
+                increment_metric("hunter_lookup_attempts")
                 emails = hunter_email_lookup(domain)
+                hunter_calls_after = get_run_hunter_calls()
+
+                # With per-run metrics enabled, count only uncached API calls.
+                # Without run metrics (standalone script), treat each lookup as a call attempt.
+                api_call_made = True if not RUN_METRICS_FILE else hunter_calls_after > hunter_calls_before
+                if api_call_made:
+                    pair_hunter_calls += 1
+
                 viable_emails = filter_viable_emails(emails)
+                if api_call_made and viable_emails:
+                    pair_hunter_hits += 1
+                    increment_metric("hunter_viable_hits")
+
+                if (
+                    HUNTER_MIN_HIT_RATE > 0
+                    and pair_hunter_calls >= HUNTER_MIN_CALLS_BEFORE_PAUSE
+                ):
+                    hit_rate = pair_hunter_hits / max(1, pair_hunter_calls)
+                    if hit_rate < HUNTER_MIN_HIT_RATE:
+                        hunter_pair_paused = True
+                        increment_metric("hunter_low_hit_rate_pauses")
+                        if DEBUG:
+                            print(
+                                f"[HUNTER-PAUSE] Pair hit rate {hit_rate:.2f} below "
+                                f"threshold {HUNTER_MIN_HIT_RATE:.2f}; pausing Hunter for remaining leads"
+                            )
+                        break
+
                 if viable_emails:
                     # Guardrail: if the email domain itself has a live business site,
                     # this is not a true no-website lead.
@@ -737,6 +828,7 @@ def enrich(service, town, max_leads=None):
                 found_emails += 1
                 row["emails"] = ", ".join(emails_found)
                 row["website"] = ""
+                row["__email_source"] = "hunter"
                 enriched.append(row)
             else:
                 # keep if truly no site/email found (potential cold)
@@ -757,6 +849,12 @@ def enrich(service, town, max_leads=None):
         print(f"   ↳ Skipped (business had site): {skipped_site}")
         print(f"   ↳ Skipped (pre‑enrich score floor): {skipped_score_floor}")
         print(f"   ↳ With verified emails: {found_emails}")
+        if HUNTER_MAX_CALLS_PER_PAIR > 0 or HUNTER_MAX_CALLS_PER_RUN > 0 or HUNTER_MIN_HIT_RATE > 0:
+            hit_rate = (pair_hunter_hits / max(1, pair_hunter_calls)) if pair_hunter_calls else 0.0
+            print(
+                f"   ↳ Hunter calls (pair): {pair_hunter_calls} | "
+                f"hits: {pair_hunter_hits} | hit_rate: {hit_rate:.2f}"
+            )
         return out_path
 
     except Exception as e:

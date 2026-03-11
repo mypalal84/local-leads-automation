@@ -9,6 +9,11 @@ import pytest
 import find_no_website_emails as enrich_mod
 
 
+def _write_empty_metrics(path: pathlib.Path):
+    payload = dict(enrich_mod.RUN_METRICS_TEMPLATE)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "raw, expected",
     [
@@ -578,3 +583,154 @@ def test_enrich_limits_hunter_lookups_per_lead_to_one_by_default(tmp_path, monke
     out_path = enrich_mod.enrich(service, town)
     assert out_path == str(in_path)
     assert hunter_calls["count"] == 1
+
+
+def test_enrich_respects_hunter_max_calls_per_pair(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    metrics_file = data_dir / "run_metrics.json"
+    _write_empty_metrics(metrics_file)
+
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "RUN_METRICS_FILE", str(metrics_file))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_DOMAINS_PER_LEAD", 5)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_CALLS_PER_PAIR", 1)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_CALLS_PER_RUN", 0)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MIN_HIT_RATE", 0.0)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow({"name": "Acme Fencing", "emails": "", "website": "", "notes": "", "link": ""})
+
+    monkeypatch.setattr(
+        enrich_mod,
+        "search_serper",
+        lambda _query: [
+            "https://first-example.com/contact",
+            "https://second-example.com/about",
+            "https://third-example.com/team",
+        ],
+    )
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+
+    calls = {"count": 0}
+
+    def fake_hunter(_domain):
+        calls["count"] += 1
+        enrich_mod.increment_metric("hunter")
+        enrich_mod.increment_metric("hunter_calls")
+        enrich_mod.increment_metric("hunter_success")
+        enrich_mod.increment_metric("hunter_latency_ms_count")
+        return []
+
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+    assert calls["count"] == 1
+
+
+def test_enrich_respects_hunter_max_calls_per_run(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    metrics_file = data_dir / "run_metrics.json"
+    _write_empty_metrics(metrics_file)
+    # Simulate one Hunter call already used earlier in the run.
+    payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+    payload["hunter_calls"] = 1
+    metrics_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "RUN_METRICS_FILE", str(metrics_file))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_DOMAINS_PER_LEAD", 5)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_CALLS_PER_PAIR", 0)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_CALLS_PER_RUN", 1)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MIN_HIT_RATE", 0.0)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow({"name": "Acme Fencing", "emails": "", "website": "", "notes": "", "link": ""})
+
+    monkeypatch.setattr(enrich_mod, "search_serper", lambda _query: ["https://first-example.com/contact"])
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+
+    calls = {"count": 0}
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", lambda _domain: calls.update(count=calls["count"] + 1) or [])
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+    assert calls["count"] == 0
+
+
+def test_enrich_pauses_hunter_on_low_hit_rate(tmp_path, monkeypatch):
+    data_dir = pathlib.Path(tmp_path)
+    metrics_file = data_dir / "run_metrics.json"
+    _write_empty_metrics(metrics_file)
+
+    monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(enrich_mod, "RUN_METRICS_FILE", str(metrics_file))
+    monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
+    monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_DOMAINS_PER_LEAD", 5)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_CALLS_PER_PAIR", 0)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_CALLS_PER_RUN", 0)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MIN_CALLS_BEFORE_PAUSE", 2)
+    monkeypatch.setattr(enrich_mod, "HUNTER_MIN_HIT_RATE", 0.5)
+
+    service = "Fence Installation / Repair"
+    town = "Colorado Springs, CO"
+    safe_town = enrich_mod.sanitize_for_filename(town)
+    safe_service = enrich_mod.sanitize_for_filename(service)
+    in_path = data_dir / f"leads_{safe_town}_{safe_service}_NO_WEBSITE_2026-02-26.csv"
+
+    with open(in_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["name", "emails", "website", "notes", "link"])
+        writer.writeheader()
+        writer.writerow({"name": "Acme Fencing", "emails": "", "website": "", "notes": "", "link": ""})
+
+    monkeypatch.setattr(
+        enrich_mod,
+        "search_serper",
+        lambda _query: [
+            "https://first-example.com/contact",
+            "https://second-example.com/about",
+            "https://third-example.com/team",
+            "https://fourth-example.com/staff",
+        ],
+    )
+    monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
+
+    calls = {"count": 0}
+
+    def fake_hunter(_domain):
+        calls["count"] += 1
+        enrich_mod.increment_metric("hunter")
+        enrich_mod.increment_metric("hunter_calls")
+        enrich_mod.increment_metric("hunter_success")
+        enrich_mod.increment_metric("hunter_latency_ms_count")
+        return []
+
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
+
+    out_path = enrich_mod.enrich(service, town)
+    assert out_path == str(in_path)
+    assert calls["count"] == 2

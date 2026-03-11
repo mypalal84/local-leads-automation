@@ -7,7 +7,7 @@ delay randomization, and reply‑based cleanup.
 ------------------------------------------------------
 """
 
-import os, smtplib, ssl, csv, time, random, imaplib, email, re, sys
+import os, smtplib, ssl, csv, time, random, imaplib, email, re, sys, json
 import requests
 from email.mime.text import MIMEText
 from email.header import decode_header
@@ -101,6 +101,7 @@ UNSUBSCRIBE_FOOTER = os.getenv(
 TODAY_STAMP = datetime.now().strftime('%Y-%m-%d')
 DAILY_SENT_LOG = os.path.join(DAILY_SENT_DIR, f"daily_sent_{TODAY_STAMP}.csv")
 LEGACY_DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{TODAY_STAMP}.csv")
+RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 NEGATIVE_REPLY_KEYWORDS = [
     "unsubscribe", "stop", "remove", "do not contact", "don't contact",
     "not interested", "no thanks", "no thank you", "wrong email", "spam"
@@ -347,6 +348,21 @@ def append_to_suppressions(email_addr, reason="manual"):
     with open(SUPPRESSIONS_FILE, "a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([email_addr, reason, datetime.now().isoformat(timespec="seconds")])
     return True
+
+
+def increment_run_metric(metric_key: str, amount: int = 1):
+    if not RUN_METRICS_FILE:
+        return
+    try:
+        data = {}
+        if os.path.exists(RUN_METRICS_FILE):
+            with open(RUN_METRICS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        data[metric_key] = int(data.get(metric_key, 0) or 0) + int(amount)
+        with open(RUN_METRICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        return
 
 
 def load_hard_bounce_domain_blocklist(threshold):
@@ -1348,6 +1364,8 @@ def send_cold_emails(csv_file=None):
                 server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
                 append_to_log(email_field, lead_score=lead_score, source_file=csv_file)
                 append_to_daily_log(email_field, lead_score=lead_score, source_file=csv_file)
+                if (row.get("__email_source", "") or "").strip().lower() == "hunter":
+                    increment_run_metric("hunter_sent")
                 sent.add(email_field)
                 domain_send_counts[domain] = domain_send_counts.get(domain, 0) + 1
                 remaining_quota -= 1
