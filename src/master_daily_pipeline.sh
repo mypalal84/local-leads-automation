@@ -113,6 +113,12 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${AUTO_TUNE_ENRICH_PASS1_STEP:=5}"
 : "${PAIR_SCORING_ENABLED:=true}"
 : "${PAIR_SCORING_LOOKBACK_OUTCOMES:=300}"
+: "${PAIR_SCORING_ZERO_SEND_PENALTY:=0.60}"
+: "${PAIR_SCORING_NO_OUTPUT_PENALTY:=1.20}"
+: "${PAIR_SUPPRESSION_ENABLED:=true}"
+: "${PAIR_SUPPRESSION_MIN_STRIKES:=2}"
+: "${PAIR_SUPPRESSION_COOLDOWN_DAYS:=5}"
+: "${PAIR_SUPPRESSION_LOOKBACK_OUTCOMES:=400}"
 : "${MAX_PAIRS_PER_RUN:=15}"
 : "${ZERO_SEND_STREAK_STOP:=0}"
 : "${MAX_REPLACEMENT_ATTEMPTS_PER_SLOT:=25}"
@@ -149,11 +155,17 @@ if [[ "$PAIR_SCORING_ENABLED" == "1" || "$PAIR_SCORING_ENABLED" == "true" || "$P
 else
   PAIR_SCORING_ENABLED="false"
 fi
+if [[ "$PAIR_SUPPRESSION_ENABLED" == "1" || "$PAIR_SUPPRESSION_ENABLED" == "true" || "$PAIR_SUPPRESSION_ENABLED" == "yes" ]]; then
+  PAIR_SUPPRESSION_ENABLED="true"
+else
+  PAIR_SUPPRESSION_ENABLED="false"
+fi
 shopt -u nocasematch
 
 RUN_METRICS_DIR="$LOG_DIR/run_metrics"
 mkdir -p "$LOG_DIR" "$DATA_DIR" "$RUN_METRICS_DIR"
 PAIR_OUTCOMES_CSV="$RUN_METRICS_DIR/pair_outcomes.csv"
+declare -A SUPPRESSED_PAIRS=()
 
 ensure_pair_outcomes_header() {
   if [[ ! -f "$PAIR_OUTCOMES_CSV" ]]; then
@@ -198,6 +210,8 @@ rank_candidates_by_history() {
   CANDIDATE_AXIS="$axis" \
   PAIR_OUTCOMES_CSV="$PAIR_OUTCOMES_CSV" \
   LOOKBACK_OUTCOMES="$PAIR_SCORING_LOOKBACK_OUTCOMES" \
+  ZERO_SEND_PENALTY="$PAIR_SCORING_ZERO_SEND_PENALTY" \
+  NO_OUTPUT_PENALTY="$PAIR_SCORING_NO_OUTPUT_PENALTY" \
   "$PYTHON_BIN" - "${candidates[@]}" <<'PY'
 import csv
 import os
@@ -206,6 +220,8 @@ import sys
 axis = os.getenv("CANDIDATE_AXIS", "")
 path = os.getenv("PAIR_OUTCOMES_CSV", "")
 lookback = int(os.getenv("LOOKBACK_OUTCOMES", "300") or 300)
+zero_send_penalty = float(os.getenv("ZERO_SEND_PENALTY", "0.60") or 0.60)
+no_output_penalty = float(os.getenv("NO_OUTPUT_PENALTY", "1.20") or 1.20)
 
 candidates = [value for value in sys.argv[1:] if value]
 if axis not in {"service", "city"} or not candidates:
@@ -256,7 +272,7 @@ def score(value: str) -> float:
   zero_rate = stat["zero"] / n
   no_output_rate = stat["no_output"] / n
   confidence = min(1.0, n / 5.0)
-  raw = avg_sent - (0.35 * zero_rate) - (0.60 * no_output_rate)
+  raw = avg_sent - (zero_send_penalty * zero_rate) - (no_output_penalty * no_output_rate)
   return raw * confidence
 
 indexed = list(enumerate(candidates))
@@ -279,6 +295,8 @@ rank_preview_by_history() {
   CANDIDATE_AXIS="$axis" \
   PAIR_OUTCOMES_CSV="$PAIR_OUTCOMES_CSV" \
   LOOKBACK_OUTCOMES="$PAIR_SCORING_LOOKBACK_OUTCOMES" \
+  ZERO_SEND_PENALTY="$PAIR_SCORING_ZERO_SEND_PENALTY" \
+  NO_OUTPUT_PENALTY="$PAIR_SCORING_NO_OUTPUT_PENALTY" \
   PREVIEW_LIMIT="$limit" \
   "$PYTHON_BIN" - "${candidates[@]}" <<'PY'
 import csv
@@ -288,6 +306,8 @@ import sys
 axis = os.getenv("CANDIDATE_AXIS", "")
 path = os.getenv("PAIR_OUTCOMES_CSV", "")
 lookback = int(os.getenv("LOOKBACK_OUTCOMES", "300") or 300)
+zero_send_penalty = float(os.getenv("ZERO_SEND_PENALTY", "0.60") or 0.60)
+no_output_penalty = float(os.getenv("NO_OUTPUT_PENALTY", "1.20") or 1.20)
 limit = int(os.getenv("PREVIEW_LIMIT", "5") or 5)
 
 candidates = [value for value in sys.argv[1:] if value]
@@ -333,7 +353,7 @@ def score(value: str) -> float:
   zero_rate = stat["zero"] / n
   no_output_rate = stat["no_output"] / n
   confidence = min(1.0, n / 5.0)
-  raw = avg_sent - (0.35 * zero_rate) - (0.60 * no_output_rate)
+  raw = avg_sent - (zero_send_penalty * zero_rate) - (no_output_penalty * no_output_rate)
   return raw * confidence
 
 indexed = list(enumerate(candidates))
@@ -353,6 +373,120 @@ selected_pairs_are_valid() {
     fi
   done
   return 0
+}
+
+load_suppressed_pairs() {
+  SUPPRESSED_PAIRS=()
+
+  if [[ "$PAIR_SUPPRESSION_ENABLED" != "true" ]]; then
+    return
+  fi
+  if ! [[ "$PAIR_SUPPRESSION_MIN_STRIKES" =~ ^[0-9]+$ ]] || (( PAIR_SUPPRESSION_MIN_STRIKES < 1 )); then
+    PAIR_SUPPRESSION_MIN_STRIKES=2
+  fi
+  if ! [[ "$PAIR_SUPPRESSION_COOLDOWN_DAYS" =~ ^[0-9]+$ ]] || (( PAIR_SUPPRESSION_COOLDOWN_DAYS < 1 )); then
+    PAIR_SUPPRESSION_COOLDOWN_DAYS=5
+  fi
+  if ! [[ "$PAIR_SUPPRESSION_LOOKBACK_OUTCOMES" =~ ^[0-9]+$ ]] || (( PAIR_SUPPRESSION_LOOKBACK_OUTCOMES < 1 )); then
+    PAIR_SUPPRESSION_LOOKBACK_OUTCOMES=400
+  fi
+  if [[ ! -f "$PAIR_OUTCOMES_CSV" ]]; then
+    return
+  fi
+
+  local suppressed_keys=()
+  readarray -t suppressed_keys < <(
+    PAIR_OUTCOMES_CSV="$PAIR_OUTCOMES_CSV" \
+    LOOKBACK_OUTCOMES="$PAIR_SUPPRESSION_LOOKBACK_OUTCOMES" \
+    MIN_STRIKES="$PAIR_SUPPRESSION_MIN_STRIKES" \
+    COOLDOWN_DAYS="$PAIR_SUPPRESSION_COOLDOWN_DAYS" \
+    "$PYTHON_BIN" - <<'PY'
+import csv
+import os
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+path = os.getenv("PAIR_OUTCOMES_CSV", "")
+lookback = int(os.getenv("LOOKBACK_OUTCOMES", "400") or 400)
+min_strikes = int(os.getenv("MIN_STRIKES", "2") or 2)
+cooldown_days = int(os.getenv("COOLDOWN_DAYS", "5") or 5)
+
+if not path or not os.path.isfile(path):
+  raise SystemExit
+
+rows = []
+with open(path, newline="", encoding="utf-8") as f:
+  reader = csv.DictReader(f)
+  for row in reader:
+    rows.append(row)
+rows = rows[-max(1, lookback):]
+
+def parse_ts(row):
+  for key, fmt in (("timestamp", "%Y-%m-%d %H:%M:%S"), ("date", "%Y-%m-%d")):
+    value = (row.get(key) or "").strip()
+    if not value:
+      continue
+    try:
+      return datetime.strptime(value, fmt)
+    except Exception:
+      continue
+  return None
+
+cutoff = datetime.now() - timedelta(days=max(1, cooldown_days))
+per_pair = defaultdict(list)
+for row in rows:
+  service = (row.get("service") or "").strip()
+  city = (row.get("city") or "").strip()
+  if not service or not city:
+    continue
+  ts = parse_ts(row)
+  if ts is None:
+    continue
+  try:
+    sent_delta = int(float(row.get("sent_delta", 0) or 0))
+  except Exception:
+    sent_delta = 0
+  try:
+    no_output = int(float(row.get("no_output", 0) or 0))
+  except Exception:
+    no_output = 0
+  bad = sent_delta <= 0 or no_output > 0
+  per_pair[(service, city)].append((ts, bad))
+
+for (service, city), outcomes in per_pair.items():
+  outcomes.sort(key=lambda x: x[0])
+  if outcomes[-1][0] < cutoff:
+    continue
+  strikes = 0
+  for ts, bad in reversed(outcomes):
+    if ts < cutoff:
+      break
+    if bad:
+      strikes += 1
+    else:
+      break
+  if strikes >= max(1, min_strikes):
+    print(f"{service}|{city}")
+PY
+  )
+
+  local key
+  for key in "${suppressed_keys[@]}"; do
+    if [[ -n "$key" ]]; then
+      SUPPRESSED_PAIRS["$key"]=1
+    fi
+  done
+
+  if (( ${#SUPPRESSED_PAIRS[@]} > 0 )); then
+    log "[SCHED][SUPPRESS] Loaded ${#SUPPRESSED_PAIRS[@]} weak pair suppression(s) (cooldown=${PAIR_SUPPRESSION_COOLDOWN_DAYS}d, strikes=$PAIR_SUPPRESSION_MIN_STRIKES)." | tee -a "$LOG_DIR/summary.log"
+  fi
+}
+
+is_pair_suppressed() {
+  local service="$1"
+  local city="$2"
+  local key="${service}|${city}"
+  [[ -n "${SUPPRESSED_PAIRS[$key]:-}" ]]
 }
 
 archive_run_metrics_files() {
@@ -779,27 +913,14 @@ PY
 
 # Services ------------------------------------------------------------
 SERVICES=(
-"Plumbers" "Roofers" "Electricians" "Contractors / General Contractors"
-"Landscapers / Lawn Care" "HVAC / Heating & Cooling" "Pest Control"
-"Pool Maintenance / Repair" "Appliance Repair" "Handyman Services"
-"Window Cleaning" "Garage Door Services" "Fence Installation / Repair"
-"Carpet / Floor Cleaning" "Dentists" "Chiropractors" "Massage Therapists"
-"Physical Therapy Clinics" "Acupuncturists" "Personal Trainers / Fitness Coaches"
-"Yoga / Pilates Studios" "Martial Arts Schools" "Speech Therapists"
-"Dietitians / Nutritionists" "Auto Repair / Mechanics" "Towing Services"
-"Car Wash / Detailing" "Auto Body / Paint Shops" "Moving Companies"
-"Storage Facilities (local)" "Lawyers (solo or small firms)" "Accountants / CPAs"
-"Notaries" "Tax Preparation Services" "Insurance Agents / Brokers"
-"Real Estate Agents (solo)" "Home Inspectors" "Hair Salons / Barbershops"
-"Nail Salons / Beauty Services" "Pet Grooming / Pet Care"
-"Dog Walking / Pet Sitting" "Event Planners / Party Rentals"
-"Photography / Videography Studios" "Tutoring / Learning Centers"
-"Music / Art Teachers" "Catering (small local)" "Florists" "Tailors / Alterations"
-"Dry Cleaners" "Locksmiths" "Sign Installation / Printing"
-"Elevator / Lift Maintenance" "Pool / Spa Installation"
-"Solar Panel Installation" "Siding Installation / Repair"
-"Tree Services / Arborists" "Fence Builders" "Deck / Patio Builders"
-"Window / Door Installation"
+"Auto Repair / Mechanics" "Electricians" "Dry Cleaners" "Tailors / Alterations"
+"Nail Salons / Beauty Services" "Contractors / General Contractors"
+"Hair Salons / Barbershops" "Towing Services" "Auto Body / Paint Shops"
+"HVAC / Heating & Cooling" "Roofers" "Fence Builders" "Car Wash / Detailing"
+"Personal Trainers / Fitness Coaches" "Solar Panel Installation"
+"Moving Companies" "Dietitians / Nutritionists" "Appliance Repair"
+"Garage Door Services" "Dentists" "Pet Grooming / Pet Care" "Plumbers"
+"Window Cleaning" "Martial Arts Schools" "Notaries"
 )
 
 # Cities --------------------------------------------------------------
@@ -857,6 +978,7 @@ CITIES=(
 
 # Random selection ----------------------------------------------------
 apply_closed_loop_autotune
+load_suppressed_pairs
 
 sent_today_start=$(today_sent_count)
 remaining_at_start=$((DAILY_EMAIL_TARGET - sent_today_start))
@@ -917,6 +1039,49 @@ fi
 SEL_SERVICES=("${SHUF_SERVICES[@]:0:$pair_count}")
 SEL_CITIES=("${SHUF_CITIES[@]:0:$pair_count}")
 
+NEXT_REPLACEMENT_PAIR_INDEX=$pair_count
+REPLACEMENT_PAIR=""
+
+next_replacement_pair() {
+  REPLACEMENT_PAIR=""
+  local max_pairs=${#SHUF_SERVICES[@]}
+  if (( ${#SHUF_CITIES[@]} < max_pairs )); then
+    max_pairs=${#SHUF_CITIES[@]}
+  fi
+
+  while (( NEXT_REPLACEMENT_PAIR_INDEX < max_pairs )); do
+    local replacement_service="${SHUF_SERVICES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
+    local replacement_city="${SHUF_CITIES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
+    NEXT_REPLACEMENT_PAIR_INDEX=$((NEXT_REPLACEMENT_PAIR_INDEX + 1))
+
+    if [[ -z "${replacement_service//[[:space:]]/}" || -z "${replacement_city//[[:space:]]/}" ]]; then
+      continue
+    fi
+    if [[ "$PAIR_SUPPRESSION_ENABLED" == "true" ]] && is_pair_suppressed "$replacement_service" "$replacement_city"; then
+      continue
+    fi
+
+    REPLACEMENT_PAIR="${replacement_service}|${replacement_city}"
+    return 0
+  done
+  return 1
+}
+
+if [[ "$PAIR_SUPPRESSION_ENABLED" == "true" && ${#SUPPRESSED_PAIRS[@]} -gt 0 ]]; then
+  for (( i=0; i<pair_count; i++ )); do
+    service_candidate="${SEL_SERVICES[$i]-}"
+    city_candidate="${SEL_CITIES[$i]-}"
+    if is_pair_suppressed "$service_candidate" "$city_candidate"; then
+      if next_replacement_pair; then
+        IFS='|' read -r replacement_service replacement_city <<< "$REPLACEMENT_PAIR"
+        log "[SCHED][SUPPRESS] Replacing weak pair $service_candidate | $city_candidate with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
+        SEL_SERVICES[$i]="$replacement_service"
+        SEL_CITIES[$i]="$replacement_city"
+      fi
+    fi
+  done
+fi
+
 if ! selected_pairs_are_valid; then
   log "[ERR] Empty service/city detected in selected pairs. Falling back to unranked shuffle." | tee -a "$LOG_DIR/summary.log"
   SHUF_SERVICES=("${UNRANKED_SERVICES[@]}")
@@ -928,26 +1093,6 @@ if ! selected_pairs_are_valid; then
     exit 1
   fi
 fi
-
-NEXT_REPLACEMENT_PAIR_INDEX=$pair_count
-REPLACEMENT_PAIR=""
-
-next_replacement_pair() {
-  REPLACEMENT_PAIR=""
-  local max_pairs=${#SHUF_SERVICES[@]}
-  if (( ${#SHUF_CITIES[@]} < max_pairs )); then
-    max_pairs=${#SHUF_CITIES[@]}
-  fi
-  if (( NEXT_REPLACEMENT_PAIR_INDEX >= max_pairs )); then
-    return 1
-  fi
-
-  local replacement_service="${SHUF_SERVICES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
-  local replacement_city="${SHUF_CITIES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
-  NEXT_REPLACEMENT_PAIR_INDEX=$((NEXT_REPLACEMENT_PAIR_INDEX + 1))
-  REPLACEMENT_PAIR="${replacement_service}|${replacement_city}"
-  return 0
-}
 
 echo "=== Today's Random Selections ===" | tee -a "$LOG_DIR/summary.log"
 
@@ -985,6 +1130,8 @@ log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.
 log "[LIMIT] MAX_ENRICH_LEADS_PER_PAIR=$MAX_ENRICH_LEADS_PER_PAIR" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] ZERO_SEND_STREAK_STOP=$ZERO_SEND_STREAK_STOP" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] PAIR_SCORING_ENABLED=$PAIR_SCORING_ENABLED, lookback_outcomes=$PAIR_SCORING_LOOKBACK_OUTCOMES" | tee -a "$LOG_DIR/summary.log"
+log "[SCHED] scoring_penalties zero_send=$PAIR_SCORING_ZERO_SEND_PENALTY, no_output=$PAIR_SCORING_NO_OUTPUT_PENALTY" | tee -a "$LOG_DIR/summary.log"
+log "[SCHED] PAIR_SUPPRESSION_ENABLED=$PAIR_SUPPRESSION_ENABLED, strikes=$PAIR_SUPPRESSION_MIN_STRIKES, cooldown_days=$PAIR_SUPPRESSION_COOLDOWN_DAYS" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] ADAPTIVE_PAIR_SCHEDULING=$ADAPTIVE_PAIR_SCHEDULING, lookback=$ADAPTIVE_LOOKBACK_RUNS, safety_factor=$ADAPTIVE_SAFETY_FACTOR" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair_base=$EXPECTED_SENDS_PER_PAIR, expected_per_pair_effective=$effective_expected_sends_per_pair, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
 
