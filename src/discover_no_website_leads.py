@@ -563,20 +563,24 @@ def discover(service: str, town: str):
         )
 
         provider = DISCOVERY_PROVIDER
+        serper_query = (
+            f'"{service}" "{town}" ("no website" OR "no site" OR "site coming soon" '
+            f'OR "under construction" OR "Google My Business" OR "business.site") '
+            f'-site:facebook.com -site:yelp.com -site:linkedin.com '
+            f'-site:bbb.org -site:angi.com -site:thumbtack.com'
+        )
         if provider == "google_places" and not GOOGLE_PLACES:
             print("[WARN] DISCOVERY_PROVIDER=google_places but key missing; falling back to serper.")
             provider = "serper"
 
         if provider == "google_places":
             results = run_google_places_text_search(service, town)
+            if not results and SERPER:
+                print("[FALLBACK] Google Places returned no results; trying Serper discovery.")
+                provider = "serper"
+                results = run_serper_search(serper_query)
         else:
-            query = (
-                f'"{service}" "{town}" ("no website" OR "no site" OR "site coming soon" '
-                f'OR "under construction" OR "Google My Business" OR "business.site") '
-                f'-site:facebook.com -site:yelp.com -site:linkedin.com '
-                f'-site:bbb.org -site:angi.com -site:thumbtack.com'
-            )
-            results = run_serper_search(query)
+            results = run_serper_search(serper_query)
 
         if not results:
             print(f"[WARN] No discovery results for {town} | {service}")

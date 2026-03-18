@@ -414,3 +414,38 @@ def test_discover_google_places_respects_target_and_details_fallback_limit(tmp_p
     df = pd.read_csv(out_path)
     assert len(df) == 2
     assert sorted(df["name"].tolist()) == ["Lead One", "Lead Two"]
+
+
+def test_discover_falls_back_to_serper_when_google_places_returns_empty(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-google-key")
+    monkeypatch.setenv("SERPER_API_KEY", "test-serper-key")
+    monkeypatch.delenv("DISCOVERY_PROVIDER", raising=False)
+    module = load_discover_module(home)
+
+    monkeypatch.setattr(module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "run_google_places_text_search", lambda _s, _t: [])
+    monkeypatch.setattr(module, "is_probably_real_website", lambda _link, _name="": False)
+
+    serper_called = {"count": 0}
+
+    def fake_serper(_query):
+        serper_called["count"] += 1
+        return [
+            {
+                "title": "Fallback Lead",
+                "link": "https://fallback-no-site.example",
+                "snippet": "No website found",
+            }
+        ]
+
+    monkeypatch.setattr(module, "run_serper_search", fake_serper)
+
+    out_path = module.discover("Window Cleaning", "Bend, OR")
+    assert out_path is not None
+    assert serper_called["count"] == 1
+
+    df = pd.read_csv(out_path)
+    assert len(df) == 1
+    assert df.iloc[0]["name"] == "Fallback Lead"
