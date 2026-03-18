@@ -41,6 +41,7 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
     env["PIPELINE_DELAY_BETWEEN_RUNS"] = "0"
     env["DAILY_EMAIL_TARGET"] = "50"
     env["EXPECTED_SENDS_PER_PAIR"] = "5"
+    env["MAX_PAIRS_PER_RUN"] = "10"
 
     subprocess.run([str(target_script)], check=True, env=env)
 
@@ -54,7 +55,7 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
 
     fields = rows[-1].split(",")
     pairs_selected = int(fields[4].strip())
-    # target=50 and default expected sends per pair=5 -> 10 selected pairs
+    # target=50 and expected sends per pair=5 => 10 selected pairs.
     assert pairs_selected == 10
 
     summary_log = (logs_dir / "summary.log").read_text(encoding="utf-8")
@@ -156,6 +157,7 @@ def test_master_pipeline_adaptive_pair_scheduling_uses_history(tmp_path):
     env["PIPELINE_DELAY_BETWEEN_RUNS"] = "0"
     env["DAILY_EMAIL_TARGET"] = "10"
     env["EXPECTED_SENDS_PER_PAIR"] = "5"
+    env["MAX_PAIRS_PER_RUN"] = "10"
     env["ADAPTIVE_PAIR_SCHEDULING"] = "true"
     env["ADAPTIVE_LOOKBACK_RUNS"] = "3"
     env["ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR"] = "1"
@@ -170,5 +172,5 @@ def test_master_pipeline_adaptive_pair_scheduling_uses_history(tmp_path):
     fields = rows[-1].split(",")
     pairs_selected = int(fields[4].strip())
 
-    # target=10 with adaptive expected_per_pair=1 -> 10 pairs selected.
+    # target=10 with adaptive expected_per_pair=1 and cap=10 -> 10 pairs selected.
     assert pairs_selected == 10
