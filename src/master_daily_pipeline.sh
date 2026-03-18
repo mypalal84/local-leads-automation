@@ -268,12 +268,6 @@ cat > "$RUN_METRICS_FILE" <<EOF
   "serper_latency_ms_sum": 0,
   "serper_latency_ms_count": 0,
   "hunter_calls": 0,
-  "hunter_lookup_attempts": 0,
-  "hunter_viable_hits": 0,
-  "hunter_pair_cap_skips": 0,
-  "hunter_run_cap_skips": 0,
-  "hunter_low_hit_rate_pauses": 0,
-  "hunter_sent": 0,
   "hunter_success": 0,
   "hunter_error": 0,
   "hunter_cache_hit": 0,
@@ -751,12 +745,6 @@ keys = {
     "serper_latency_ms_sum": 0,
     "serper_latency_ms_count": 0,
     "hunter_calls": 0,
-    "hunter_lookup_attempts": 0,
-    "hunter_viable_hits": 0,
-    "hunter_pair_cap_skips": 0,
-    "hunter_run_cap_skips": 0,
-    "hunter_low_hit_rate_pauses": 0,
-    "hunter_sent": 0,
     "hunter_success": 0,
     "hunter_error": 0,
     "hunter_cache_hit": 0,
@@ -872,12 +860,6 @@ print("|".join([
     str(keys["google_places_details_calls"]),
     str(keys["serper_cache_hit"]),
     str(keys["hunter_cache_hit"]),
-    str(keys["hunter_lookup_attempts"]),
-    str(keys["hunter_viable_hits"]),
-    str(keys["hunter_pair_cap_skips"]),
-    str(keys["hunter_run_cap_skips"]),
-    str(keys["hunter_low_hit_rate_pauses"]),
-    str(keys["hunter_sent"]),
     f"{avg_latency('google_places'):.1f}",
     f"{avg_latency('serper'):.1f}",
     f"{avg_latency('hunter'):.1f}",
@@ -902,7 +884,6 @@ IFS='|' read -r \
   api_google_places_success api_serper_success api_hunter_success \
   api_google_places_error api_serper_error api_hunter_error \
   api_google_places_cache_hit api_google_places_text_search_calls api_google_places_details_calls api_serper_cache_hit api_hunter_cache_hit \
-  api_hunter_lookup_attempts api_hunter_viable_hits api_hunter_pair_cap_skips api_hunter_run_cap_skips api_hunter_low_hit_rate_pauses api_hunter_sent \
   api_google_places_avg_latency_ms api_serper_avg_latency_ms api_hunter_avg_latency_ms \
   api_calls_total api_success_total api_error_total api_cache_hits_total \
   api_success_rate cache_hit_rate emails_per_api_call \
@@ -916,9 +897,9 @@ if [[ -f "$KPI_CSV" ]]; then
   fi
 fi
 if [[ ! -f "$KPI_CSV" ]]; then
-  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,total_lead_files,sent_today_total,remaining_quota_end,pending_queue_end,run_duration_sec,discovery_duration_sec,enrich_duration_sec,outreach_duration_sec,api_calls_total,api_success_total,api_error_total,api_success_rate,cache_hits_total,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,hunter_lookup_attempts,hunter_viable_hits,hunter_pair_cap_skips,hunter_run_cap_skips,hunter_low_hit_rate_pauses,hunter_sent,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$KPI_CSV"
+  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,total_lead_files,sent_today_total,remaining_quota_end,pending_queue_end,run_duration_sec,discovery_duration_sec,enrich_duration_sec,outreach_duration_sec,api_calls_total,api_success_total,api_error_total,api_success_rate,cache_hits_total,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$KPI_CSV"
 fi
-echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$lead_count,$sent_today_end,$remaining_quota_end,$pending_queue_size_end,$RUN_DURATION_SEC,$DISCOVERY_DURATION_SEC,$ENRICH_DURATION_SEC,$OUTREACH_DURATION_SEC,${api_calls_total:-0},${api_success_total:-0},${api_error_total:-0},${api_success_rate:-0},${api_cache_hits_total:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_hunter_lookup_attempts:-0},${api_hunter_viable_hits:-0},${api_hunter_pair_cap_skips:-0},${api_hunter_run_cap_skips:-0},${api_hunter_low_hit_rate_pauses:-0},${api_hunter_sent:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$KPI_CSV"
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$lead_count,$sent_today_end,$remaining_quota_end,$pending_queue_size_end,$RUN_DURATION_SEC,$DISCOVERY_DURATION_SEC,$ENRICH_DURATION_SEC,$OUTREACH_DURATION_SEC,${api_calls_total:-0},${api_success_total:-0},${api_error_total:-0},${api_success_rate:-0},${api_cache_hits_total:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$KPI_CSV"
 log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
 
 if [[ -f "$RUN_HISTORY_CSV" ]]; then
@@ -928,9 +909,9 @@ if [[ -f "$RUN_HISTORY_CSV" ]]; then
   fi
 fi
 if [[ ! -f "$RUN_HISTORY_CSV" ]]; then
-  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,pending_queue_end,run_duration_sec,api_calls_total,api_success_rate,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,hunter_lookup_attempts,hunter_viable_hits,hunter_pair_cap_skips,hunter_run_cap_skips,hunter_low_hit_rate_pauses,hunter_sent,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$RUN_HISTORY_CSV"
+  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,pending_queue_end,run_duration_sec,api_calls_total,api_success_rate,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$RUN_HISTORY_CSV"
 fi
-echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$pending_queue_size_end,$RUN_DURATION_SEC,${api_calls_total:-0},${api_success_rate:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_hunter_lookup_attempts:-0},${api_hunter_viable_hits:-0},${api_hunter_pair_cap_skips:-0},${api_hunter_run_cap_skips:-0},${api_hunter_low_hit_rate_pauses:-0},${api_hunter_sent:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$RUN_HISTORY_CSV"
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$pending_queue_size_end,$RUN_DURATION_SEC,${api_calls_total:-0},${api_success_rate:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$RUN_HISTORY_CSV"
 log "[KPI] Appended run metrics history row -> $RUN_HISTORY_CSV" | tee -a "$LOG_DIR/summary.log"
 
 success_alert=$(awk -v success="$api_success_rate" -v threshold="$API_SUCCESS_RATE_ALERT_THRESHOLD" 'BEGIN {print ((success + 0.0) < (threshold + 0.0)) ? 1 : 0}')
@@ -968,12 +949,6 @@ API Calls This Run:
   - Place Details calls: ${api_google_places_details_calls:-0}
 - Serper: ${api_serper_count:-0} (calls=${api_serper_calls:-0}, success=${api_serper_success:-0}, error=${api_serper_error:-0}, cache_hit=${api_serper_cache_hit:-0}, avg_latency_ms=${api_serper_avg_latency_ms:-0})
 - Hunter: ${api_hunter_count:-0} (calls=${api_hunter_calls:-0}, success=${api_hunter_success:-0}, error=${api_hunter_error:-0}, cache_hit=${api_hunter_cache_hit:-0}, avg_latency_ms=${api_hunter_avg_latency_ms:-0})
-  - Hunter lookup attempts: ${api_hunter_lookup_attempts:-0}
-  - Hunter viable hits: ${api_hunter_viable_hits:-0}
-  - Hunter sent: ${api_hunter_sent:-0}
-  - Hunter pair cap skips: ${api_hunter_pair_cap_skips:-0}
-  - Hunter run cap skips: ${api_hunter_run_cap_skips:-0}
-  - Hunter low-hit-rate pauses: ${api_hunter_low_hit_rate_pauses:-0}
 
 Derived Efficiency:
 - API calls total: ${api_calls_total:-0}
