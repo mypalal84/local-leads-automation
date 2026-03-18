@@ -54,9 +54,7 @@ Daily_Leads/
 │   ├── find_no_website_emails.py# Lead enrichment (Serper + Hunter)
 │   ├── send_cold_emails.py      # Outreach + reply handling
 │   ├── generate_send_audit.py   # Post-run audit (suppressed/current/fail-no-suppression lists)
-│   ├── daily_summary_report.py  # Optional standalone summary mailer
-│   ├── health_check.py          # Post-run KPI health check (targets + baseline comparison)
-│   └── check.sh                 # One-command wrapper for health_check.py
+│   └── daily_summary_report.py  # Optional standalone summary mailer
 │
 ├── tests/                       # Pytest suite (unit + dry-run integration)
 │
@@ -94,9 +92,6 @@ ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR=2
 ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR=8
 # Multiply observed recent sends/pair before clamping (1.0 keeps raw average)
 ADAPTIVE_SAFETY_FACTOR=1.0
-# Rank shuffled services/cities using recent pair outcomes before pair selection.
-PAIR_SCORING_ENABLED=true
-PAIR_SCORING_LOOKBACK_OUTCOMES=300
 # Closed-loop auto-tune (bounded runtime adjustment from recent history)
 AUTO_TUNE_ENABLED=false
 AUTO_TUNE_LOOKBACK_RUNS=3
@@ -144,8 +139,6 @@ LOG_ARCHIVE_RETENTION_DAYS=60
 LOG_ROTATE_MAX_MB=10
 API_SUCCESS_RATE_ALERT_THRESHOLD=90
 EFFICIENCY_MIN_EMAILS_PER_API_CALL=0.2
-# Recovery guardrail for replacement loops in a pair slot.
-MAX_REPLACEMENT_ATTEMPTS_PER_SLOT=25
 
 # Google Places cost model controls (tiered estimator)
 GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000=35
@@ -207,22 +200,6 @@ DRY_RUN=true PIPELINE_DELAY_BETWEEN_RUNS=1 ./master_daily_pipeline.sh
 ```bash
 cd /Users/alexcahn/Scripts/Daily_Leads/src
 DAILY_EMAIL_TARGET=50 ENRICH_BUFFER_MULTIPLIER=2 ./master_daily_pipeline.sh
-```
-
-### Post-run health check
-
-Run a quick KPI check (sent volume, API efficiency, targets, and baseline comparison):
-
-```bash
-cd /Users/alexcahn/Scripts/Daily_Leads
-./src/check.sh
-```
-
-Or run directly with Python:
-
-```bash
-cd /Users/alexcahn/Scripts/Daily_Leads
-/Users/alexcahn/Scripts/.venv/bin/python src/health_check.py
 ```
 
 Note: `master_daily_pipeline.sh` sources `.env` before scheduling/pair selection, so values like `DAILY_EMAIL_TARGET`, `EXPECTED_SENDS_PER_PAIR`, and `MAX_PAIRS_PER_RUN` are applied at startup. Inline env vars in the run command still override `.env` for that run.
@@ -291,8 +268,6 @@ Current opener behavior:
 - 🧩 Per-pair enrichment quota slicing (prevents one pair from consuming full remaining budget)
 - 📊 Dynamic pair scheduling (`EXPECTED_SENDS_PER_PAIR`, `MAX_PAIRS_PER_RUN`)
 - 📉 Adaptive pair scheduling from recent run history (`ADAPTIVE_PAIR_SCHEDULING`)
-- 🎯 History-based service/city pair scoring using recent pair outcomes (`PAIR_SCORING_ENABLED`)
-- 🧱 Replacement-loop guardrail to prevent infinite retries per slot (`MAX_REPLACEMENT_ATTEMPTS_PER_SLOT`)
 - ✅ Lead quality gate before send (`LEAD_SCORE_THRESHOLD`)
 - 🧮 Pre-enrich score floor to avoid low-probability API calls (`PRE_ENRICH_SCORE_FILTER`)
 - 🚦 Existing-website rows are skipped before enrichment API calls
@@ -353,7 +328,6 @@ Total replied addresses: 2
 | `data/suppressions.csv` | Suppressed addresses (manual and auto from negative replies) |
 | `data/pending_leads.csv` | Deferred leads to retry next run (always present; includes `lead_score` for prioritization) |
 | `data/cache/` | Cached API responses used to reduce repeat Google Places/Serper/Hunter calls |
-| `logs/run_metrics/pair_outcomes.csv` | Per-pair telemetry (`service`, `city`, `sent_delta`, `no_output`, reason) used by pair scoring |
 | `logs/daily_kpi.csv` | Run-by-run KPIs: pairs, sent, replies, quota remaining |
 | `logs/run_metrics/run_metrics_<timestamp>.json` | Per-run API counters used in summary email |
 | `logs/archive/<timestamp>/run_metrics_*.json` | Archived run metrics moved out of the live logs root each new run |

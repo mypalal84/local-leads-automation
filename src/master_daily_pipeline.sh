@@ -111,11 +111,8 @@ if [[ -n "$OVERRIDE_PRE_ENRICH_SCORE_FILTER" ]]; then PRE_ENRICH_SCORE_FILTER="$
 : "${AUTO_TUNE_ENRICH_PASS1_BUDGET_MIN:=60}"
 : "${AUTO_TUNE_ENRICH_PASS1_BUDGET_MAX:=90}"
 : "${AUTO_TUNE_ENRICH_PASS1_STEP:=5}"
-: "${PAIR_SCORING_ENABLED:=true}"
-: "${PAIR_SCORING_LOOKBACK_OUTCOMES:=300}"
 : "${MAX_PAIRS_PER_RUN:=15}"
 : "${ZERO_SEND_STREAK_STOP:=0}"
-: "${MAX_REPLACEMENT_ATTEMPTS_PER_SLOT:=25}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
 : "${LOG_ARCHIVE_RETENTION_DAYS:=60}"
 : "${DRY_RUN:=false}"
@@ -144,120 +141,10 @@ if [[ "$AUTO_TUNE_ENABLED" == "1" || "$AUTO_TUNE_ENABLED" == "true" || "$AUTO_TU
 else
   AUTO_TUNE_ENABLED="false"
 fi
-if [[ "$PAIR_SCORING_ENABLED" == "1" || "$PAIR_SCORING_ENABLED" == "true" || "$PAIR_SCORING_ENABLED" == "yes" ]]; then
-  PAIR_SCORING_ENABLED="true"
-else
-  PAIR_SCORING_ENABLED="false"
-fi
 shopt -u nocasematch
 
 RUN_METRICS_DIR="$LOG_DIR/run_metrics"
 mkdir -p "$LOG_DIR" "$DATA_DIR" "$RUN_METRICS_DIR"
-PAIR_OUTCOMES_CSV="$RUN_METRICS_DIR/pair_outcomes.csv"
-
-ensure_pair_outcomes_header() {
-  if [[ ! -f "$PAIR_OUTCOMES_CSV" ]]; then
-  echo "date,timestamp,run_id,service,city,sent_delta,no_output,reason" > "$PAIR_OUTCOMES_CSV"
-  fi
-}
-
-record_pair_outcome() {
-  local service="$1"
-  local city="$2"
-  local sent_delta="$3"
-  local no_output="$4"
-  local reason="$5"
-
-  if [[ "$DRY_RUN" == "true" ]]; then
-  return
-  fi
-
-  ensure_pair_outcomes_header
-  local esc_service="${service//\"/\"\"}"
-  local esc_city="${city//\"/\"\"}"
-  printf "%s,%s,%s,\"%s\",\"%s\",%s,%s,%s\n" \
-  "$(date +%Y-%m-%d)" \
-  "$(date '+%Y-%m-%d %H:%M:%S')" \
-  "$RUN_ID" \
-  "$esc_service" \
-  "$esc_city" \
-  "$sent_delta" \
-  "$no_output" \
-  "$reason" >> "$PAIR_OUTCOMES_CSV"
-}
-
-rank_candidates_by_history() {
-  local axis="$1"
-  CANDIDATE_AXIS="$axis" \
-  PAIR_OUTCOMES_CSV="$PAIR_OUTCOMES_CSV" \
-  LOOKBACK_OUTCOMES="$PAIR_SCORING_LOOKBACK_OUTCOMES" \
-  "$PYTHON_BIN" - <<'PY'
-import csv
-import os
-import sys
-
-axis = os.getenv("CANDIDATE_AXIS", "")
-path = os.getenv("PAIR_OUTCOMES_CSV", "")
-lookback = int(os.getenv("LOOKBACK_OUTCOMES", "300") or 300)
-
-candidates = [line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]
-if axis not in {"service", "city"} or not candidates:
-  for value in candidates:
-    print(value)
-  raise SystemExit
-
-if not path or not os.path.isfile(path):
-  for value in candidates:
-    print(value)
-  raise SystemExit
-
-rows = []
-with open(path, newline="", encoding="utf-8") as f:
-  reader = csv.DictReader(f)
-  for row in reader:
-    rows.append(row)
-rows = rows[-max(1, lookback):]
-
-metrics = {}
-for row in rows:
-  key = (row.get(axis) or "").strip()
-  if not key:
-    continue
-  try:
-    sent_delta = int(float(row.get("sent_delta", 0) or 0))
-  except Exception:
-    sent_delta = 0
-  try:
-    no_output = int(float(row.get("no_output", 0) or 0))
-  except Exception:
-    no_output = 0
-
-  bucket = metrics.setdefault(key, {"n": 0, "sent": 0, "zero": 0, "no_output": 0})
-  bucket["n"] += 1
-  bucket["sent"] += max(0, sent_delta)
-  if sent_delta <= 0:
-    bucket["zero"] += 1
-  if no_output > 0:
-    bucket["no_output"] += 1
-
-def score(value: str) -> float:
-  stat = metrics.get(value)
-  if not stat or stat["n"] <= 0:
-    return 0.0
-  n = stat["n"]
-  avg_sent = stat["sent"] / n
-  zero_rate = stat["zero"] / n
-  no_output_rate = stat["no_output"] / n
-  confidence = min(1.0, n / 5.0)
-  raw = avg_sent - (0.35 * zero_rate) - (0.60 * no_output_rate)
-  return raw * confidence
-
-indexed = list(enumerate(candidates))
-indexed.sort(key=lambda item: (-score(item[1]), item[0]))
-for _, value in indexed:
-  print(value)
-PY
-}
 
 archive_run_metrics_files() {
   local archive_stamp="$1"
@@ -804,17 +691,11 @@ fi
 
 readarray -t SHUF_SERVICES < <(printf "%s\n" "${SERVICES[@]}" | sort -R)
 readarray -t SHUF_CITIES   < <(printf "%s\n" "${CITIES[@]}"   | sort -R)
-if [[ "$PAIR_SCORING_ENABLED" == "true" ]]; then
-  readarray -t SHUF_SERVICES < <(printf "%s\n" "${SHUF_SERVICES[@]}" | rank_candidates_by_history "service")
-  readarray -t SHUF_CITIES < <(printf "%s\n" "${SHUF_CITIES[@]}" | rank_candidates_by_history "city")
-fi
 SEL_SERVICES=("${SHUF_SERVICES[@]:0:$pair_count}")
 SEL_CITIES=("${SHUF_CITIES[@]:0:$pair_count}")
 NEXT_REPLACEMENT_PAIR_INDEX=$pair_count
-REPLACEMENT_PAIR=""
 
 next_replacement_pair() {
-  REPLACEMENT_PAIR=""
   local max_pairs=${#SHUF_SERVICES[@]}
   if (( ${#SHUF_CITIES[@]} < max_pairs )); then
     max_pairs=${#SHUF_CITIES[@]}
@@ -826,7 +707,7 @@ next_replacement_pair() {
   local replacement_service="${SHUF_SERVICES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
   local replacement_city="${SHUF_CITIES[$NEXT_REPLACEMENT_PAIR_INDEX]}"
   NEXT_REPLACEMENT_PAIR_INDEX=$((NEXT_REPLACEMENT_PAIR_INDEX + 1))
-  REPLACEMENT_PAIR="${replacement_service}|${replacement_city}"
+  echo "${replacement_service}|${replacement_city}"
   return 0
 }
 
@@ -865,7 +746,6 @@ log "[MODE] DRY_RUN=$DRY_RUN" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] DAILY_EMAIL_TARGET=$DAILY_EMAIL_TARGET" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] MAX_ENRICH_LEADS_PER_PAIR=$MAX_ENRICH_LEADS_PER_PAIR" | tee -a "$LOG_DIR/summary.log"
 log "[LIMIT] ZERO_SEND_STREAK_STOP=$ZERO_SEND_STREAK_STOP" | tee -a "$LOG_DIR/summary.log"
-log "[SCHED] PAIR_SCORING_ENABLED=$PAIR_SCORING_ENABLED, lookback_outcomes=$PAIR_SCORING_LOOKBACK_OUTCOMES" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] ADAPTIVE_PAIR_SCHEDULING=$ADAPTIVE_PAIR_SCHEDULING, lookback=$ADAPTIVE_LOOKBACK_RUNS, safety_factor=$ADAPTIVE_SAFETY_FACTOR" | tee -a "$LOG_DIR/summary.log"
 log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair_base=$EXPECTED_SENDS_PER_PAIR, expected_per_pair_effective=$effective_expected_sends_per_pair, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
 
@@ -875,7 +755,6 @@ stop_pipeline="false"
 while IFS='|' read -r service city; do
   COUNT=$((COUNT + 1))
   pair_completed="false"
-  pair_retry_count=0
   while [[ "$pair_completed" != "true" ]]; do
   sent_today=$(today_sent_count)
   remaining_quota=$((DAILY_EMAIL_TARGET - sent_today))
@@ -898,16 +777,9 @@ while IFS='|' read -r service city; do
       step_finished_epoch="$(date +%s)"
       DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
-      record_pair_outcome "$service" "$city" 0 1 "discovery_failed"
-      if next_replacement_pair; then
-        pair_retry_count=$((pair_retry_count + 1))
-        if (( pair_retry_count > MAX_REPLACEMENT_ATTEMPTS_PER_SLOT )); then
-          log "[ERR] Replacement loop guard hit after $pair_retry_count attempts for slot $COUNT/$TOTAL. Skipping slot." | tee -a "$LOG_DIR/summary.log"
-          sleep "$DELAY_BETWEEN_RUNS"
-          pair_completed="true"
-          continue
-        fi
-        IFS='|' read -r replacement_service replacement_city <<< "$REPLACEMENT_PAIR"
+      replacement_pair="$(next_replacement_pair || true)"
+      if [[ -n "$replacement_pair" ]]; then
+        IFS='|' read -r replacement_service replacement_city <<< "$replacement_pair"
         log "[RECOVER] Replacing failed pair with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
         service="$replacement_service"
         city="$replacement_city"
@@ -945,16 +817,9 @@ while IFS='|' read -r service city; do
       step_finished_epoch="$(date +%s)"
       ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
-      record_pair_outcome "$service" "$city" 0 1 "enrichment_failed"
-      if next_replacement_pair; then
-        pair_retry_count=$((pair_retry_count + 1))
-        if (( pair_retry_count > MAX_REPLACEMENT_ATTEMPTS_PER_SLOT )); then
-          log "[ERR] Replacement loop guard hit after $pair_retry_count attempts for slot $COUNT/$TOTAL. Skipping slot." | tee -a "$LOG_DIR/summary.log"
-          sleep "$DELAY_BETWEEN_RUNS"
-          pair_completed="true"
-          continue
-        fi
-        IFS='|' read -r replacement_service replacement_city <<< "$REPLACEMENT_PAIR"
+      replacement_pair="$(next_replacement_pair || true)"
+      if [[ -n "$replacement_pair" ]]; then
+        IFS='|' read -r replacement_service replacement_city <<< "$replacement_pair"
         log "[RECOVER] Replacing failed pair with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
         service="$replacement_service"
         city="$replacement_city"
@@ -974,16 +839,9 @@ while IFS='|' read -r service city; do
   OUT_FILE="$DATA_DIR/leads_${FILE_TAG}_NO_WEBSITE_$(date +%Y-%m-%d).csv"
   if [[ "$DRY_RUN" == "false" && ! -f "$OUT_FILE" ]]; then
     log "[WARN] No enriched file found -> $OUT_FILE" | tee -a "$LOG_DIR/summary.log"
-    record_pair_outcome "$service" "$city" 0 1 "no_enriched_file"
-    if next_replacement_pair; then
-      pair_retry_count=$((pair_retry_count + 1))
-      if (( pair_retry_count > MAX_REPLACEMENT_ATTEMPTS_PER_SLOT )); then
-        log "[ERR] Replacement loop guard hit after $pair_retry_count attempts for slot $COUNT/$TOTAL. Skipping slot." | tee -a "$LOG_DIR/summary.log"
-        sleep "$DELAY_BETWEEN_RUNS"
-        pair_completed="true"
-        continue
-      fi
-      IFS='|' read -r replacement_service replacement_city <<< "$REPLACEMENT_PAIR"
+    replacement_pair="$(next_replacement_pair || true)"
+    if [[ -n "$replacement_pair" ]]; then
+      IFS='|' read -r replacement_service replacement_city <<< "$replacement_pair"
       log "[RECOVER] Replacing no-output pair with $replacement_service | $replacement_city" | tee -a "$LOG_DIR/summary.log"
       service="$replacement_service"
       city="$replacement_city"
@@ -1014,7 +872,6 @@ while IFS='|' read -r service city; do
   OUTREACH_DURATION_SEC=$((OUTREACH_DURATION_SEC + step_finished_epoch - step_started_epoch))
 
   log "[PAIR-RESULT] sent_delta=$pair_sent_delta for $service | $city" | tee -a "$LOG_DIR/summary.log"
-  record_pair_outcome "$service" "$city" "$pair_sent_delta" 0 "completed"
   if [[ "$DRY_RUN" == "false" ]]; then
     if (( pair_sent_delta <= 0 )); then
       zero_send_streak=$((zero_send_streak + 1))
@@ -1025,7 +882,6 @@ while IFS='|' read -r service city; do
 
     if (( ZERO_SEND_STREAK_STOP > 0 && zero_send_streak >= ZERO_SEND_STREAK_STOP )); then
       log "[LIMIT] Zero-send streak reached ($zero_send_streak). Stopping remaining pairs." | tee -a "$LOG_DIR/summary.log"
-      stop_pipeline="true"
       break
     fi
   fi
