@@ -26,12 +26,6 @@ HUNTER = os.getenv("HUNTER_API_KEY")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
 PRE_ENRICH_SCORE_FILTER = os.getenv("PRE_ENRICH_SCORE_FILTER", "true").strip().lower() in {"1", "true", "yes", "on"}
-ENRICH_TWO_PASS_ENABLED = os.getenv("ENRICH_TWO_PASS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
-try:
-    ENRICH_PASS1_BUDGET_PCT = int(os.getenv("ENRICH_PASS1_BUDGET_PCT", "70"))
-except Exception:
-    ENRICH_PASS1_BUDGET_PCT = 70
-ENRICH_PASS1_BUDGET_PCT = max(1, min(100, ENRICH_PASS1_BUDGET_PCT))
 STARTUP_PRIORITY = os.getenv("STARTUP_PRIORITY", "false").strip().lower() in {"1", "true", "yes", "on"}
 STARTUP_SCORE_BOOST = int(os.getenv("STARTUP_SCORE_BOOST", "2"))
 STARTUP_MAX_AGE_YEARS = int(os.getenv("STARTUP_MAX_AGE_YEARS", "5"))
@@ -639,23 +633,6 @@ def can_reach_send_threshold(row, threshold):
     # (+1 for having an email, +1 for non-free domain)
     return pre_enrich_base_score(row) + 2 >= threshold
 
-
-def enrich_intent_label(row, threshold):
-    """Classify rows for two-pass enrichment prioritization."""
-    notes = "" if pd.isna(row.get("notes", "")) else str(row.get("notes", "")).lower()
-    base = pre_enrich_base_score(row)
-    startup = startup_signal_score(row)
-
-    if (
-        base >= max(1, threshold - 1)
-        or startup > 0
-        or any(token in notes for token in ("no website", "under construction", "business.site"))
-    ):
-        return "high"
-    if can_reach_send_threshold(row, threshold):
-        return "medium"
-    return "low"
-
 # ======================================================
 # ENRICH MAIN
 # ======================================================
@@ -691,7 +668,6 @@ def enrich(service, town, max_leads=None):
             df = df.head(max_leads)
 
         enriched, skipped_site, found_emails, skipped_score_floor = [], 0, 0, 0
-        skipped_two_pass_low_intent = 0
         pair_hunter_calls = 0
         pair_hunter_hits = 0
         hunter_pair_paused = False
@@ -699,24 +675,7 @@ def enrich(service, town, max_leads=None):
         hunter_run_cap_hit = False
         print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} …")
 
-        rows_with_intent = []
         for _, row in df.iterrows():
-            rows_with_intent.append((row, enrich_intent_label(row, LEAD_SCORE_THRESHOLD)))
-
-        pass1_budget_count = len(rows_with_intent)
-        if ENRICH_TWO_PASS_ENABLED:
-            intent_rank = {"high": 0, "medium": 1, "low": 2}
-            rows_with_intent.sort(key=lambda item: intent_rank.get(item[1], 3))
-            pass1_budget_count = max(1, int((len(rows_with_intent) * ENRICH_PASS1_BUDGET_PCT + 99) / 100))
-            high_count = sum(1 for _, intent in rows_with_intent if intent == "high")
-            medium_count = sum(1 for _, intent in rows_with_intent if intent == "medium")
-            low_count = sum(1 for _, intent in rows_with_intent if intent == "low")
-            print(
-                f"[TWO-PASS] enabled=true, pass1_budget={pass1_budget_count}/{len(rows_with_intent)}, "
-                f"high={high_count}, medium={medium_count}, low={low_count}"
-            )
-
-        for idx, (row, intent_label) in enumerate(rows_with_intent, start=1):
             website_val = row.get("website", "")
             existing_website = "" if pd.isna(website_val) else str(website_val).strip()
             name = str(row.get("name", "")).strip()
@@ -725,16 +684,6 @@ def enrich(service, town, max_leads=None):
                 skipped_site += 1
                 safe_name = name or "(unknown)"
                 print(f"[SKIP-API] Existing website present for {safe_name}: {existing_website}")
-                continue
-
-            if ENRICH_TWO_PASS_ENABLED and idx > pass1_budget_count and intent_label == "low":
-                skipped_two_pass_low_intent += 1
-                row["emails"] = ""
-                row["website"] = ""
-                enriched.append(row)
-                if DEBUG:
-                    name_dbg = str(row.get("name", "")).strip() or "(unknown)"
-                    print(f"[TWO-PASS] Skipping low-intent API calls in pass 2 for {name_dbg}")
                 continue
 
             if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):
@@ -899,7 +848,6 @@ def enrich(service, town, max_leads=None):
         print(f"[✅] Saved {len(enriched)} leads → {out_path}")
         print(f"   ↳ Skipped (business had site): {skipped_site}")
         print(f"   ↳ Skipped (pre‑enrich score floor): {skipped_score_floor}")
-        print(f"   ↳ Skipped (two‑pass low intent): {skipped_two_pass_low_intent}")
         print(f"   ↳ With verified emails: {found_emails}")
         if HUNTER_MAX_CALLS_PER_PAIR > 0 or HUNTER_MAX_CALLS_PER_RUN > 0 or HUNTER_MIN_HIT_RATE > 0:
             hit_rate = (pair_hunter_hits / max(1, pair_hunter_calls)) if pair_hunter_calls else 0.0
