@@ -743,7 +743,6 @@ def test_two_pass_skips_low_intent_in_pass_two(tmp_path, monkeypatch):
     monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
     monkeypatch.setattr(enrich_mod, "ENRICH_TWO_PASS_ENABLED", True)
     monkeypatch.setattr(enrich_mod, "ENRICH_PASS1_BUDGET_PCT", 50)
-    monkeypatch.setattr(enrich_mod, "LEAD_SCORE_THRESHOLD", 3)
 
     service = "Fence Installation / Repair"
     town = "Colorado Springs, CO"
