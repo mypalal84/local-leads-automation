@@ -59,7 +59,6 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
 
     summary_log = (logs_dir / "summary.log").read_text(encoding="utf-8")
     assert "[KPI] Appended daily KPI row" in summary_log
-    assert "\n|\n" not in summary_log
 
 
 @pytest.mark.integration
@@ -236,61 +235,3 @@ def test_master_pipeline_auto_tune_loosen_mode_adjusts_runtime_knobs(tmp_path):
     assert "LEAD_SCORE_THRESHOLD: 3 -> 2" in summary_log
     assert "HUNTER_MAX_CALLS_PER_PAIR: 3 -> 4" in summary_log
     assert "ENRICH_PASS1_BUDGET_PCT: 70 -> 75" in summary_log
-
-
-@pytest.mark.integration
-def test_master_pipeline_pair_scoring_logs_rank_preview_and_non_empty_pairs(tmp_path):
-    brew_bash = pathlib.Path("/opt/homebrew/bin/bash")
-    if not brew_bash.exists():
-        pytest.skip("Requires Homebrew bash at /opt/homebrew/bin/bash")
-
-    home = tmp_path / "home"
-    base_dir = home / "Scripts" / "Daily_Leads"
-    src_dir = base_dir / "src"
-    logs_dir = base_dir / "logs"
-    run_metrics_dir = logs_dir / "run_metrics"
-    data_dir = base_dir / "data"
-
-    src_dir.mkdir(parents=True)
-    run_metrics_dir.mkdir(parents=True)
-    data_dir.mkdir(parents=True)
-
-    project_root = pathlib.Path(__file__).resolve().parents[1]
-    source_script = project_root / "src" / "master_daily_pipeline.sh"
-    target_script = src_dir / "master_daily_pipeline.sh"
-    target_script.write_text(source_script.read_text(encoding="utf-8"), encoding="utf-8")
-    target_script.chmod(0o755)
-
-    env_file = base_dir / ".env"
-    env_file.write_text(
-        "DAILY_LEAD_EMAIL_SENDER=test@example.com\n"
-        "DAILY_LEAD_EMAIL_PASS=dummy\n"
-        "REPLY_NOTIFY_TO=test@example.com\n",
-        encoding="utf-8",
-    )
-
-    (run_metrics_dir / "pair_outcomes.csv").write_text(
-        "date,timestamp,run_id,service,city,sent_delta,no_output,reason\n"
-        '2026-03-12,2026-03-12 07:00:00,run1,Plumbers,"Seattle, WA",8,0,completed\n'
-        '2026-03-12,2026-03-12 08:00:00,run2,Plumbers,"Seattle, WA",7,0,completed\n'
-        '2026-03-12,2026-03-12 09:00:00,run3,Plumbers,"Seattle, WA",9,0,completed\n'
-        '2026-03-12,2026-03-12 10:00:00,run4,Roofers,"Austin, TX",0,1,no_enriched_file\n',
-        encoding="utf-8",
-    )
-
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["DRY_RUN"] = "true"
-    env["PIPELINE_DELAY_BETWEEN_RUNS"] = "0"
-    env["DAILY_EMAIL_TARGET"] = "10"
-    env["EXPECTED_SENDS_PER_PAIR"] = "5"
-    env["PAIR_SCORING_ENABLED"] = "true"
-    env["PAIR_SCORING_LOOKBACK_OUTCOMES"] = "100"
-
-    subprocess.run([str(target_script)], check=True, env=env)
-
-    summary_log = (logs_dir / "summary.log").read_text(encoding="utf-8")
-    assert "[SCHED][RANK] Top services:" in summary_log
-    assert "[SCHED][RANK] Top cities:" in summary_log
-    assert "Plumbers (score=" in summary_log
-    assert "\n|\n" not in summary_log

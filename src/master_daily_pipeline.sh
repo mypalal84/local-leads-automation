@@ -188,17 +188,10 @@ record_pair_outcome() {
 
 rank_candidates_by_history() {
   local axis="$1"
-  shift
-  local candidates=("$@")
-
-  if (( ${#candidates[@]} == 0 )); then
-    return
-  fi
-
   CANDIDATE_AXIS="$axis" \
   PAIR_OUTCOMES_CSV="$PAIR_OUTCOMES_CSV" \
   LOOKBACK_OUTCOMES="$PAIR_SCORING_LOOKBACK_OUTCOMES" \
-  "$PYTHON_BIN" - "${candidates[@]}" <<'PY'
+  "$PYTHON_BIN" - <<'PY'
 import csv
 import os
 import sys
@@ -207,7 +200,7 @@ axis = os.getenv("CANDIDATE_AXIS", "")
 path = os.getenv("PAIR_OUTCOMES_CSV", "")
 lookback = int(os.getenv("LOOKBACK_OUTCOMES", "300") or 300)
 
-candidates = [value for value in sys.argv[1:] if value]
+candidates = [line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]
 if axis not in {"service", "city"} or not candidates:
   for value in candidates:
     print(value)
@@ -264,95 +257,6 @@ indexed.sort(key=lambda item: (-score(item[1]), item[0]))
 for _, value in indexed:
   print(value)
 PY
-}
-
-rank_preview_by_history() {
-  local axis="$1"
-  local limit="$2"
-  shift 2
-  local candidates=("$@")
-
-  if (( ${#candidates[@]} == 0 )); then
-    return
-  fi
-
-  CANDIDATE_AXIS="$axis" \
-  PAIR_OUTCOMES_CSV="$PAIR_OUTCOMES_CSV" \
-  LOOKBACK_OUTCOMES="$PAIR_SCORING_LOOKBACK_OUTCOMES" \
-  PREVIEW_LIMIT="$limit" \
-  "$PYTHON_BIN" - "${candidates[@]}" <<'PY'
-import csv
-import os
-import sys
-
-axis = os.getenv("CANDIDATE_AXIS", "")
-path = os.getenv("PAIR_OUTCOMES_CSV", "")
-lookback = int(os.getenv("LOOKBACK_OUTCOMES", "300") or 300)
-limit = int(os.getenv("PREVIEW_LIMIT", "5") or 5)
-
-candidates = [value for value in sys.argv[1:] if value]
-if axis not in {"service", "city"} or not candidates:
-  raise SystemExit
-
-rows = []
-if path and os.path.isfile(path):
-  with open(path, newline="", encoding="utf-8") as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-      rows.append(row)
-rows = rows[-max(1, lookback):]
-
-metrics = {}
-for row in rows:
-  key = (row.get(axis) or "").strip()
-  if not key:
-    continue
-  try:
-    sent_delta = int(float(row.get("sent_delta", 0) or 0))
-  except Exception:
-    sent_delta = 0
-  try:
-    no_output = int(float(row.get("no_output", 0) or 0))
-  except Exception:
-    no_output = 0
-
-  bucket = metrics.setdefault(key, {"n": 0, "sent": 0, "zero": 0, "no_output": 0})
-  bucket["n"] += 1
-  bucket["sent"] += max(0, sent_delta)
-  if sent_delta <= 0:
-    bucket["zero"] += 1
-  if no_output > 0:
-    bucket["no_output"] += 1
-
-def score(value: str) -> float:
-  stat = metrics.get(value)
-  if not stat or stat["n"] <= 0:
-    return 0.0
-  n = stat["n"]
-  avg_sent = stat["sent"] / n
-  zero_rate = stat["zero"] / n
-  no_output_rate = stat["no_output"] / n
-  confidence = min(1.0, n / 5.0)
-  raw = avg_sent - (0.35 * zero_rate) - (0.60 * no_output_rate)
-  return raw * confidence
-
-indexed = list(enumerate(candidates))
-indexed.sort(key=lambda item: (-score(item[1]), item[0]))
-for _, value in indexed[: max(1, limit)]:
-  print(f"{value} (score={score(value):.3f})")
-PY
-}
-
-selected_pairs_are_valid() {
-  local i
-  for (( i=0; i<pair_count; i++ )); do
-    local service_candidate="${SEL_SERVICES[$i]-}"
-    local city_candidate="${SEL_CITIES[$i]-}"
-    if [[ -z "${service_candidate//[[:space:]]/}" || -z "${city_candidate//[[:space:]]/}" ]]; then
-      return 1
-    fi
-  done
-  return 0
 }
 
 archive_run_metrics_files() {
@@ -900,35 +804,12 @@ fi
 
 readarray -t SHUF_SERVICES < <(printf "%s\n" "${SERVICES[@]}" | sort -R)
 readarray -t SHUF_CITIES   < <(printf "%s\n" "${CITIES[@]}"   | sort -R)
-UNRANKED_SERVICES=("${SHUF_SERVICES[@]}")
-UNRANKED_CITIES=("${SHUF_CITIES[@]}")
 if [[ "$PAIR_SCORING_ENABLED" == "true" ]]; then
-  readarray -t SHUF_SERVICES < <(rank_candidates_by_history "service" "${SHUF_SERVICES[@]}")
-  readarray -t SHUF_CITIES < <(rank_candidates_by_history "city" "${SHUF_CITIES[@]}")
-  rank_services_preview="$(rank_preview_by_history "service" 5 "${SHUF_SERVICES[@]}" | awk 'NF { printf "%s%s", sep, $0; sep="; " } END { print "" }')"
-  rank_cities_preview="$(rank_preview_by_history "city" 5 "${SHUF_CITIES[@]}" | awk 'NF { printf "%s%s", sep, $0; sep="; " } END { print "" }')"
-  if [[ -n "$rank_services_preview" ]]; then
-    log "[SCHED][RANK] Top services: $rank_services_preview" | tee -a "$LOG_DIR/summary.log"
-  fi
-  if [[ -n "$rank_cities_preview" ]]; then
-    log "[SCHED][RANK] Top cities: $rank_cities_preview" | tee -a "$LOG_DIR/summary.log"
-  fi
+  readarray -t SHUF_SERVICES < <(printf "%s\n" "${SHUF_SERVICES[@]}" | rank_candidates_by_history "service")
+  readarray -t SHUF_CITIES < <(printf "%s\n" "${SHUF_CITIES[@]}" | rank_candidates_by_history "city")
 fi
 SEL_SERVICES=("${SHUF_SERVICES[@]:0:$pair_count}")
 SEL_CITIES=("${SHUF_CITIES[@]:0:$pair_count}")
-
-if ! selected_pairs_are_valid; then
-  log "[ERR] Empty service/city detected in selected pairs. Falling back to unranked shuffle." | tee -a "$LOG_DIR/summary.log"
-  SHUF_SERVICES=("${UNRANKED_SERVICES[@]}")
-  SHUF_CITIES=("${UNRANKED_CITIES[@]}")
-  SEL_SERVICES=("${SHUF_SERVICES[@]:0:$pair_count}")
-  SEL_CITIES=("${SHUF_CITIES[@]:0:$pair_count}")
-  if ! selected_pairs_are_valid; then
-    log "[ERR] Selected pairs remain invalid after fallback. Aborting run before API usage." | tee -a "$LOG_DIR/summary.log"
-    exit 1
-  fi
-fi
-
 NEXT_REPLACEMENT_PAIR_INDEX=$pair_count
 REPLACEMENT_PAIR=""
 
