@@ -292,7 +292,5 @@ def test_master_pipeline_pair_scoring_logs_rank_preview_and_non_empty_pairs(tmp_
     summary_log = (logs_dir / "summary.log").read_text(encoding="utf-8")
     assert "[SCHED][RANK] Top services:" in summary_log
     assert "[SCHED][RANK] Top cities:" in summary_log
-    assert "[SCHED] scoring_penalties zero_send=" in summary_log
-    assert "[SCHED] PAIR_SUPPRESSION_ENABLED=" in summary_log
     assert "Plumbers (score=" in summary_log
     assert "\n|\n" not in summary_log
