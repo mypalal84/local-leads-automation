@@ -139,12 +139,6 @@ GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD=150
 # Sender queue/reply behavior
 BLOCK_GENERIC_INBOXES=false
 SKIP_REPLY_CHECK_CLEANUP=false
-SEND_QUEUE_PRIORITY_V2_ENABLED=false
-QUEUE_AGE_BONUS_PER_DAY=0.2
-QUEUE_AGE_BONUS_MAX=1.5
-QUEUE_RETRY_BONUS=0.4
-QUEUE_RETRY_BONUS_MAX=1.6
-QUEUE_PRIORITY_LOG_LIMIT=5
 # Optional comma-separated extra recipient domains to never send to
 # BLOCKED_RECIPIENT_DOMAINS_EXTRA=example.com,example.org
 
@@ -301,7 +295,7 @@ Total replied addresses: 2
 | --- | --- |
 | `discover_no_website_leads.py` | 🔎 Finds likely no-website leads via Google Places API (New) by default (Serper fallback) and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
 | `find_no_website_emails.py` | 🔍 Enriches discovery output, re-checks live websites, and verifies contact emails via Serper and Hunter APIs. |
-| `send_cold_emails.py` | ✉️ Sends cold emails with score-prioritized queue processing (or optional queue v2 scoring with age/retry bonuses), deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
+| `send_cold_emails.py` | ✉️ Sends cold emails with score-prioritized queue processing (highest `lead_score` first), deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
 | `daily_summary_report.py` | 📊 Generates a daily overview of lead counts and campaign performance. |
 
 ## 🗃 Data Outputs 📑
@@ -370,14 +364,6 @@ If `DISCOVERY_PROVIDER` is unset, the pipeline auto-selects `google_places` when
 - Deferred/retryable rows (for example, domain-cap overflow or transient send errors) are carried forward to `pending_leads.csv`.
 - Non-retryable policy skips are pruned and not re-queued.
 - Queue file is always written each run (header-only when empty).
-
-### Queue V2 Prioritization (Plan 3)
-
-- Enable with `SEND_QUEUE_PRIORITY_V2_ENABLED=true`.
-- Queue score formula: `lead_score + age_bonus + retry_bonus`.
-- `age_bonus` scales by queued age in days (`QUEUE_AGE_BONUS_PER_DAY`) and caps at `QUEUE_AGE_BONUS_MAX`.
-- `retry_bonus` scales by prior deferrals (`__attempted_sends`) via `QUEUE_RETRY_BONUS` and caps at `QUEUE_RETRY_BONUS_MAX`.
-- `QUEUE_PRIORITY_LOG_LIMIT` prints top queue decisions each run for auditability.
 
 ## ✅ Testing
 

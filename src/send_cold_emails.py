@@ -69,12 +69,6 @@ PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip()
 PRE_SEND_WEBSITE_GUARD = os.getenv("PRE_SEND_WEBSITE_GUARD", "false").strip().lower() in {"1", "true", "yes", "on"}
 WEBSITE_GUARD_TIMEOUT_SECONDS = max(1.0, float(os.getenv("WEBSITE_GUARD_TIMEOUT_SECONDS", "4")))
 MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
-SEND_QUEUE_PRIORITY_V2_ENABLED = os.getenv("SEND_QUEUE_PRIORITY_V2_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
-QUEUE_AGE_BONUS_PER_DAY = max(0.0, float(os.getenv("QUEUE_AGE_BONUS_PER_DAY", "0.2")))
-QUEUE_AGE_BONUS_MAX = max(0.0, float(os.getenv("QUEUE_AGE_BONUS_MAX", "1.5")))
-QUEUE_RETRY_BONUS = max(0.0, float(os.getenv("QUEUE_RETRY_BONUS", "0.4")))
-QUEUE_RETRY_BONUS_MAX = max(0.0, float(os.getenv("QUEUE_RETRY_BONUS_MAX", "1.6")))
-QUEUE_PRIORITY_LOG_LIMIT = max(0, int(os.getenv("QUEUE_PRIORITY_LOG_LIMIT", "5")))
 BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
 ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "true").strip().lower() in {"1", "true", "yes", "on"}
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -304,7 +298,7 @@ def save_pending_rows(rows):
     if not rows:
         default_fields = [
             "name", "emails", "notes", "website", "link",
-            "lead_score", "__source_file", "__town", "__service", "__queued_at", "__attempted_sends",
+            "lead_score", "__source_file", "__town", "__service", "__queued_at",
         ]
         with open(pending_file, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=default_fields)
@@ -332,42 +326,8 @@ def build_pending_row(row, source_file="", town="", service="", lead_score=""):
     if lead_score != "":
         pending_row["lead_score"] = lead_score
     pending_row.pop("__skip_reason", None)
-    if not (pending_row.get("__queued_at", "") or "").strip():
-        pending_row["__queued_at"] = datetime.now().isoformat(timespec="seconds")
-    attempts = pending_row.get("__attempted_sends", 0)
-    try:
-        attempts = int(attempts or 0)
-    except Exception:
-        attempts = 0
-    pending_row["__attempted_sends"] = str(max(0, attempts) + 1)
+    pending_row["__queued_at"] = datetime.now().isoformat(timespec="seconds")
     return pending_row
-
-
-def calculate_queue_priority(row):
-    base_score = int(row.get("__lead_score", 0) or 0)
-    queued_at_raw = (row.get("__queued_at", "") or "").strip()
-    age_days = 0.0
-    if queued_at_raw:
-        try:
-            queued_at_dt = datetime.fromisoformat(queued_at_raw)
-            age_days = max((datetime.now() - queued_at_dt).total_seconds() / 86400.0, 0.0)
-        except Exception:
-            age_days = 0.0
-
-    attempted_raw = row.get("__attempted_sends", 0)
-    try:
-        attempted_sends = max(int(attempted_raw or 0), 0)
-    except Exception:
-        attempted_sends = 0
-
-    age_bonus = min(age_days * QUEUE_AGE_BONUS_PER_DAY, QUEUE_AGE_BONUS_MAX)
-    retry_bonus = min(attempted_sends * QUEUE_RETRY_BONUS, QUEUE_RETRY_BONUS_MAX)
-    queue_priority = round(base_score + age_bonus + retry_bonus, 3)
-    reason = (
-        f"base={base_score}; age_days={age_days:.2f}=>+{age_bonus:.2f}; "
-        f"attempts={attempted_sends}=>+{retry_bonus:.2f}"
-    )
-    return queue_priority, reason
 
 def load_suppression_list():
     if not os.path.exists(SUPPRESSIONS_FILE):
@@ -1249,8 +1209,6 @@ def send_cold_emails(csv_file=None):
     print(f"[INFO] Daily quota remaining: {remaining_quota}/{DAILY_EMAIL_TARGET}")
     print(f"[INFO] Lead score threshold: {LEAD_SCORE_THRESHOLD}")
     print(f"[INFO] Domain cap: {MAX_EMAILS_PER_DOMAIN} | Block generic inboxes: {BLOCK_GENERIC_INBOXES}")
-    if SEND_QUEUE_PRIORITY_V2_ENABLED:
-        print("[INFO] Queue prioritization v2 enabled (lead score + age/retry bonuses).")
     if pending_rows:
         print(f"[INFO] Pending queue available: {len(pending_rows)} leads")
     if hard_bounce_blocked_domains:
@@ -1283,30 +1241,10 @@ def send_cold_emails(csv_file=None):
             continue
         seen_emails.add(email_field)
         row["__lead_score"] = score_lead(row, email_field)
-        if SEND_QUEUE_PRIORITY_V2_ENABLED:
-            queue_priority, queue_reason = calculate_queue_priority(row)
-            row["__queue_priority"] = queue_priority
-            row["__queue_reason"] = queue_reason
         combined_rows.append(row)
 
-    if SEND_QUEUE_PRIORITY_V2_ENABLED:
-        combined_rows.sort(
-            key=lambda item: (
-                float(item.get("__queue_priority", -999999.0)),
-                int(item.get("__lead_score", -999999)),
-                (item.get("emails", "") or "").lower(),
-            ),
-            reverse=True,
-        )
-        for idx, row in enumerate(combined_rows[:QUEUE_PRIORITY_LOG_LIMIT], start=1):
-            email_field = (row.get("emails", "") or "").split(",")[0].strip().lower()
-            print(
-                f"[QUEUE-V2] #{idx} {email_field} "
-                f"priority={row.get('__queue_priority')} ({row.get('__queue_reason', '')})"
-            )
-    else:
-        # Highest quality first: prioritize candidates with stronger lead_score.
-        combined_rows.sort(key=lambda item: int(item.get("__lead_score", -999999)), reverse=True)
+    # Highest quality first: prioritize candidates with stronger lead_score.
+    combined_rows.sort(key=lambda item: int(item.get("__lead_score", -999999)), reverse=True)
 
     carryover_rows = []
 
