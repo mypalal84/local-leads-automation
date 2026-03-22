@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-find_no_website_emails.py
-------------------------------------------------------
+enrich_leads.py
 Enhanced enrichment logic — skips any lead with a live website.
 
 Purpose:
@@ -53,7 +52,8 @@ except Exception:
     HUNTER_MAX_DOMAINS_PER_LEAD = 1
 
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_ROOT_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.path.join(DATA_ROOT_DIR, "current")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
@@ -770,7 +770,7 @@ def enrich(service, town, max_leads=None):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("Usage: python3 find_no_website_emails.py <service> <city>")
+        print("Usage: python3 enrich_leads.py <service> <city>")
     else:
         max_leads_arg = int(sys.argv[3]) if len(sys.argv) > 3 else None
         enrich(sys.argv[1], sys.argv[2], max_leads=max_leads_arg)

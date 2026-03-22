@@ -34,7 +34,8 @@ DISCOVERY_PROVIDER = os.getenv("DISCOVERY_PROVIDER", DEFAULT_DISCOVERY_PROVIDER)
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 BASE_DIR = os.path.expanduser("~/Scripts/Daily_Leads")
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_ROOT_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.path.join(DATA_ROOT_DIR, "current")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -84,7 +85,7 @@ RUN_METRICS_TEMPLATE = {
 # ======================================================
 # AUTO‑ARCHIVE PREVIOUS DATA FILES
 # ======================================================
-ARCHIVE_DIR = os.path.join(DATA_DIR, "archive")
+ARCHIVE_DIR = os.path.join(DATA_ROOT_DIR, "archive")
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 def archive_old_data():

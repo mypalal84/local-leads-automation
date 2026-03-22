@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def load_discover_module(home_dir: pathlib.Path):
-    module_path = pathlib.Path(__file__).resolve().parents[1] / "src" / "discover_no_website_leads.py"
+    module_path = pathlib.Path(__file__).resolve().parents[1] / "src" / "discovery" / "discover_no_website_leads.py"
     module_name = f"discover_no_website_leads_{uuid.uuid4().hex}"
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
@@ -19,7 +19,7 @@ def test_archive_old_data_moves_only_lead_files(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
 
-    data_dir = home / "Scripts" / "Daily_Leads" / "data"
+    data_dir = home / "Scripts" / "Daily_Leads" / "data" / "current"
     data_dir.mkdir(parents=True)
 
     lead_file = data_dir / "leads_city_service_NO_WEBSITE_2026-02-26.csv"

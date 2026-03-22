@@ -49,10 +49,14 @@ Daily_Leads/
 │   └── archive/                 # Archived lead CSV snapshots
 │
 ├── src/
-│   ├── master_daily_pipeline.sh # 🚀 Main orchestrator (cron entry point)
-│   ├── discover_no_website_leads.py # Lead discovery (Google Places New + Serper fallback)
-│   ├── find_no_website_emails.py# Lead enrichment (Serper + Hunter)
-│   ├── send_cold_emails.py      # Outreach + reply handling
+│   ├── pipeline/
+│   │   └── master_daily_pipeline.sh # 🚀 Main orchestrator (cron entry point)
+│   ├── discovery/
+│   │   └── discover_no_website_leads.py # Lead discovery (Google Places New + Serper fallback)
+│   ├── enrichment/
+│   │   └── enrich_leads.py      # Lead enrichment (Serper + Hunter)
+│   ├── outreach/
+│   │   └── send_cold_emails.py  # Outreach + reply handling
 │   ├── generate_send_audit.py   # Post-run audit (suppressed/current/fail-no-suppression lists)
 │   └── daily_summary_report.py  # Optional standalone summary mailer
 │
@@ -151,7 +155,7 @@ Cost tracking note: the pipeline now records split Google usage (`Text Search` v
 Example cron jobs (macOS / Linux):
 
 ```bash
-0 7 * * * /Users/alexcahn/Scripts/Daily_Leads/src/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
+0 7 * * * /Users/alexcahn/Scripts/Daily_Leads/src/pipeline/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
 ```
 
 ✅ Fully hands-off once scheduled.
@@ -161,15 +165,15 @@ Example cron jobs (macOS / Linux):
 Run the full control flow without API calls or sending emails:
 
 ```bash
-cd /Users/alexcahn/Scripts/Daily_Leads/src
-DRY_RUN=true PIPELINE_DELAY_BETWEEN_RUNS=1 ./master_daily_pipeline.sh
+cd /Users/alexcahn/Scripts/Daily_Leads
+DRY_RUN=true PIPELINE_DELAY_BETWEEN_RUNS=1 ./src/pipeline/master_daily_pipeline.sh
 ```
 
 ### Recommended production run flags
 
 ```bash
-cd /Users/alexcahn/Scripts/Daily_Leads/src
-DAILY_EMAIL_TARGET=50 ENRICH_BUFFER_MULTIPLIER=2 ./master_daily_pipeline.sh
+cd /Users/alexcahn/Scripts/Daily_Leads
+DAILY_EMAIL_TARGET=50 ENRICH_BUFFER_MULTIPLIER=2 ./src/pipeline/master_daily_pipeline.sh
 ```
 
 Note: `master_daily_pipeline.sh` sources `.env` before scheduling/pair selection, so values like `DAILY_EMAIL_TARGET`, `EXPECTED_SENDS_PER_PAIR`, and `MAX_PAIRS_PER_RUN` are applied at startup. Inline env vars in the run command still override `.env` for that run.
@@ -179,8 +183,8 @@ Note: `master_daily_pipeline.sh` sources `.env` before scheduling/pair selection
 Run a single-pair live canary with a slightly lower lead score threshold:
 
 ```bash
-cd /Users/alexcahn/Scripts/Daily_Leads/src
-LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1 PIPELINE_DELAY_BETWEEN_RUNS=1 ./master_daily_pipeline.sh
+cd /Users/alexcahn/Scripts/Daily_Leads
+LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1 PIPELINE_DELAY_BETWEEN_RUNS=1 ./src/pipeline/master_daily_pipeline.sh
 ```
 
 Suggested 3-day ramp:
@@ -192,8 +196,8 @@ Suggested 3-day ramp:
 Rollback (strict week-1 defaults for one run):
 
 ```bash
-cd /Users/alexcahn/Scripts/Daily_Leads/src
-LEAD_SCORE_THRESHOLD=3 MAX_PAIRS_PER_RUN=10 DAILY_EMAIL_TARGET=10 ./master_daily_pipeline.sh
+cd /Users/alexcahn/Scripts/Daily_Leads
+LEAD_SCORE_THRESHOLD=3 MAX_PAIRS_PER_RUN=10 DAILY_EMAIL_TARGET=10 ./src/pipeline/master_daily_pipeline.sh
 ```
 
 ## 📨 Cold Email Template
@@ -282,9 +286,9 @@ Total replied addresses: 2
 
 | Script | Description |
 | --- | --- |
-| `discover_no_website_leads.py` | 🔎 Finds likely no-website leads via Google Places API (New) by default (Serper fallback) and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
-| `find_no_website_emails.py` | 🔍 Enriches discovery output, re-checks live websites, and verifies contact emails via Serper and Hunter APIs. |
-| `send_cold_emails.py` | ✉️ Sends cold emails with score-prioritized queue processing (highest `lead_score` first), deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
+| `src/discovery/discover_no_website_leads.py` | 🔎 Finds likely no-website leads via Google Places API (New) by default (Serper fallback) and writes `leads_<city>_<service>_NO_WEBSITE_<date>.csv`. |
+| `src/enrichment/enrich_leads.py` | 🔍 Enriches discovery output, re-checks live websites, and verifies contact emails via Serper and Hunter APIs. |
+| `src/outreach/send_cold_emails.py` | ✉️ Sends cold emails with score-prioritized queue processing (highest `lead_score` first), deferred-lead carryover (`data/pending_leads.csv`), dynamic fields, rotating subject lines, and optional reply-cleanup skip (`SKIP_REPLY_CHECK_CLEANUP`). |
 | `daily_summary_report.py` | 📊 Generates a daily overview of lead counts and campaign performance. |
 
 ## 🗃 Data Outputs 📑

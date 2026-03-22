@@ -26,7 +26,8 @@ except Exception:
 # --------------------------------------------------
 # Load environment variables
 # --------------------------------------------------
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 EMAIL_ADDR = os.getenv("DAILY_LEAD_EMAIL_SENDER")
 EMAIL_PASS = os.getenv("DAILY_LEAD_EMAIL_PASS")
 
@@ -34,8 +35,8 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
 IMAP_SERVER = "imap.gmail.com"
 
-BASE_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(BASE_DIR, "..", "data")
+DATA_ROOT_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.path.join(DATA_ROOT_DIR, "current")
 DAILY_SENT_DIR = os.path.join(DATA_DIR, "daily_sent")
 SENT_LOG = os.path.join(DATA_DIR, "sent_log.csv")
 REPLIES_FILE = os.path.join(DATA_DIR, "replies.csv")
@@ -101,6 +102,7 @@ UNSUBSCRIBE_FOOTER = os.getenv(
 TODAY_STAMP = datetime.now().strftime('%Y-%m-%d')
 DAILY_SENT_LOG = os.path.join(DAILY_SENT_DIR, f"daily_sent_{TODAY_STAMP}.csv")
 LEGACY_DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{TODAY_STAMP}.csv")
+ROOT_LEGACY_DAILY_SENT_LOG = os.path.join(DATA_ROOT_DIR, f"daily_sent_{TODAY_STAMP}.csv")
 NEGATIVE_REPLY_KEYWORDS = [
     "unsubscribe", "stop", "remove", "do not contact", "don't contact",
     "not interested", "no thanks", "no thank you", "wrong email", "spam"
@@ -380,7 +382,12 @@ def extract_email_address(from_field):
     return m2.group(0).strip().lower() if m2 else ""
 
 def load_daily_sent_count():
-    active_log = DAILY_SENT_LOG if os.path.exists(DAILY_SENT_LOG) else LEGACY_DAILY_SENT_LOG
+    if os.path.exists(DAILY_SENT_LOG):
+        active_log = DAILY_SENT_LOG
+    elif os.path.exists(LEGACY_DAILY_SENT_LOG):
+        active_log = LEGACY_DAILY_SENT_LOG
+    else:
+        active_log = ROOT_LEGACY_DAILY_SENT_LOG
     if not os.path.exists(active_log):
         return 0
     try:
@@ -392,7 +399,12 @@ def load_daily_sent_count():
 
 def load_daily_domain_counts():
     counts = {}
-    active_log = DAILY_SENT_LOG if os.path.exists(DAILY_SENT_LOG) else LEGACY_DAILY_SENT_LOG
+    if os.path.exists(DAILY_SENT_LOG):
+        active_log = DAILY_SENT_LOG
+    elif os.path.exists(LEGACY_DAILY_SENT_LOG):
+        active_log = LEGACY_DAILY_SENT_LOG
+    else:
+        active_log = ROOT_LEGACY_DAILY_SENT_LOG
     if not os.path.exists(active_log):
         return counts
     try:

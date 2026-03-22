@@ -16,11 +16,17 @@ import csv
 import glob
 import json
 import os
+import sys
 from collections import Counter
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTREACH_DIR = os.path.join(SCRIPT_DIR, "outreach")
+if OUTREACH_DIR not in sys.path:
+    sys.path.insert(0, OUTREACH_DIR)
 
 import send_cold_emails as sender
 
@@ -37,7 +43,10 @@ def load_sent_rows(daily_sent_path: str) -> List[List[str]]:
 
 
 def source_candidates(base_dir: str, source_file: str) -> List[str]:
-    candidates = [os.path.join(base_dir, "data", source_file)]
+    candidates = [
+        os.path.join(base_dir, "data", "current", source_file),
+        os.path.join(base_dir, "data", source_file),
+    ]
     candidates.extend(glob.glob(os.path.join(base_dir, "data", "archive", "*", source_file)))
     unique_existing = sorted({path for path in candidates if os.path.exists(path)})
     return unique_existing

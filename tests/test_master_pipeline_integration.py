@@ -22,7 +22,7 @@ def test_master_pipeline_dry_run_writes_kpi(tmp_path):
     data_dir.mkdir(parents=True)
 
     project_root = pathlib.Path(__file__).resolve().parents[1]
-    source_script = project_root / "src" / "master_daily_pipeline.sh"
+    source_script = project_root / "src" / "pipeline" / "master_daily_pipeline.sh"
     target_script = src_dir / "master_daily_pipeline.sh"
     target_script.write_text(source_script.read_text(encoding="utf-8"), encoding="utf-8")
     target_script.chmod(0o755)
@@ -79,7 +79,7 @@ def test_master_pipeline_respects_env_daily_target_for_pair_selection(tmp_path):
     data_dir.mkdir(parents=True)
 
     project_root = pathlib.Path(__file__).resolve().parents[1]
-    source_script = project_root / "src" / "master_daily_pipeline.sh"
+    source_script = project_root / "src" / "pipeline" / "master_daily_pipeline.sh"
     target_script = src_dir / "master_daily_pipeline.sh"
     target_script.write_text(source_script.read_text(encoding="utf-8"), encoding="utf-8")
     target_script.chmod(0o755)
@@ -131,7 +131,7 @@ def test_master_pipeline_adaptive_pair_scheduling_uses_history(tmp_path):
     data_dir.mkdir(parents=True)
 
     project_root = pathlib.Path(__file__).resolve().parents[1]
-    source_script = project_root / "src" / "master_daily_pipeline.sh"
+    source_script = project_root / "src" / "pipeline" / "master_daily_pipeline.sh"
     target_script = src_dir / "master_daily_pipeline.sh"
     target_script.write_text(source_script.read_text(encoding="utf-8"), encoding="utf-8")
     target_script.chmod(0o755)

@@ -17,12 +17,12 @@ from datetime import datetime
 # --------------------------------------------------
 # Setup
 # --------------------------------------------------
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 EMAIL_FROM = os.getenv("DAILY_LEAD_EMAIL_SENDER")
 EMAIL_PASS = os.getenv("DAILY_LEAD_EMAIL_PASS")
 EMAIL_TO   = os.getenv("DAILY_LEAD_EMAIL_TO")
 
-DATA_DIR  = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA_DIR  = os.path.join(os.path.dirname(__file__), "..", "..", "data", "current")
 TODAY     = datetime.now().strftime("%Y-%m-%d")
 
 # --------------------------------------------------

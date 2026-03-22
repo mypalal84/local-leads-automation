@@ -3,23 +3,23 @@
 ## Current Project Scope
 This repo runs a local daily lead pipeline for businesses without websites:
 
-1. Discover leads (`discover_no_website_leads.py`)
-2. Enrich emails (`find_no_website_emails.py`)
-3. Send outreach + process replies (`send_cold_emails.py`)
-4. Orchestrate all steps (`master_daily_pipeline.sh`)
+1. Discover leads (`src/discovery/discover_no_website_leads.py`)
+2. Enrich emails (`src/enrichment/enrich_leads.py`)
+3. Send outreach + process replies (`src/outreach/send_cold_emails.py`)
+4. Orchestrate all steps (`src/pipeline/master_daily_pipeline.sh`)
 
 Prefer this modern pipeline. Legacy scripts in `archive/` are not the source of truth.
 
 ## Canonical Entry Point
-- Main runtime entry: `src/master_daily_pipeline.sh`
+- Main runtime entry: `src/pipeline/master_daily_pipeline.sh`
 - Cron should call this script.
 - The script sources `.env`, selects city/service pairs, runs discovery/enrichment/sending, and writes run metrics.
 
 ## Source-of-Truth Files
-- `src/discover_no_website_leads.py`
-- `src/find_no_website_emails.py`
-- `src/send_cold_emails.py`
-- `src/master_daily_pipeline.sh`
+- `src/discovery/discover_no_website_leads.py`
+- `src/enrichment/enrich_leads.py`
+- `src/outreach/send_cold_emails.py`
+- `src/pipeline/master_daily_pipeline.sh`
 - `README.md` (operational behavior + env documentation)
 
 When updating behavior, keep README and tests aligned.
@@ -54,13 +54,13 @@ When updating behavior, keep README and tests aligned.
 - Discovery should minimize paid API calls while preserving enough no-website leads.
 
 ## Sender + Queue Behavior
-- Pending-first flow: `send_cold_emails.py` consumes `data/pending_leads.csv` before fresh leads.
+- Pending-first flow: `src/outreach/send_cold_emails.py` consumes `data/pending_leads.csv` before fresh leads.
 - Daily cap enforcement uses `data/daily_sent/daily_sent_<date>.csv`.
 - Domain throttling and suppression list checks run before send.
 - Reply handling updates suppressions and reply logs.
 
 ## Archive/Retention Behavior
-- `master_daily_pipeline.sh` archives prior run-metrics into `logs/archive/<run_id>/`.
+- `src/pipeline/master_daily_pipeline.sh` archives prior run-metrics into `logs/archive/<run_id>/`.
 - Old archive folders are pruned by `LOG_ARCHIVE_RETENTION_DAYS` (default 60).
 - `0` disables pruning.
 
