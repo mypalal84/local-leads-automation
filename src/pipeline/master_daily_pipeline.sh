@@ -120,6 +120,10 @@ if [[ -n "$OVERRIDE_STOP_WHEN_HUNTER_CALLS_STALL" ]]; then STOP_WHEN_HUNTER_CALL
 : "${PARALLEL_DISCOVERY_ENABLED:=true}"
 : "${PARALLEL_DISCOVERY_MAX_JOBS:=3}"
 : "${PARALLEL_DISCOVERY_STAGGER_SEC:=3}"
+: "${PAIR_YIELD_RANKING_ENABLED:=true}"
+: "${PAIR_YIELD_LOOKBACK_DAYS:=14}"
+: "${PAIR_YIELD_MIN_OBS:=1}"
+: "${NO_OUTPUT_SLEEP_SECONDS:=8}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
 : "${LOG_ARCHIVE_RETENTION_DAYS:=60}"
 : "${DRY_RUN:=false}"
@@ -147,6 +151,11 @@ if [[ "$PARALLEL_DISCOVERY_ENABLED" == "1" || "$PARALLEL_DISCOVERY_ENABLED" == "
   PARALLEL_DISCOVERY_ENABLED="true"
 else
   PARALLEL_DISCOVERY_ENABLED="false"
+fi
+if [[ "$PAIR_YIELD_RANKING_ENABLED" == "1" || "$PAIR_YIELD_RANKING_ENABLED" == "true" || "$PAIR_YIELD_RANKING_ENABLED" == "yes" ]]; then
+  PAIR_YIELD_RANKING_ENABLED="true"
+else
+  PAIR_YIELD_RANKING_ENABLED="false"
 fi
 shopt -u nocasematch
 
@@ -420,6 +429,106 @@ PY
   echo "$computed"
 }
 
+reorder_pairs_by_recent_yield() {
+  local pair_file_path="$1"
+  local summary_log="$LOG_DIR/summary.log"
+
+  if [[ "$PAIR_YIELD_RANKING_ENABLED" != "true" ]]; then
+    return
+  fi
+  if [[ ! -f "$pair_file_path" || ! -f "$summary_log" ]]; then
+    return
+  fi
+
+  local ranked_output
+  ranked_output=$(PAIR_FILE_PATH="$pair_file_path" SUMMARY_LOG_PATH="$summary_log" LOOKBACK_DAYS="$PAIR_YIELD_LOOKBACK_DAYS" MIN_OBS="$PAIR_YIELD_MIN_OBS" "$PYTHON_BIN" - <<'PY'
+import os
+import re
+from datetime import datetime, timedelta
+
+pair_path = os.getenv("PAIR_FILE_PATH", "")
+summary_path = os.getenv("SUMMARY_LOG_PATH", "")
+lookback_days = int(os.getenv("LOOKBACK_DAYS", "14") or 14)
+min_obs = int(os.getenv("MIN_OBS", "1") or 1)
+
+if not pair_path or not os.path.isfile(pair_path):
+    raise SystemExit
+
+pairs = []
+with open(pair_path, "r", encoding="utf-8") as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            pairs.append(line)
+
+if not os.path.isfile(summary_path):
+    print("\n".join(pairs))
+    raise SystemExit
+
+pattern = re.compile(r"^\[(\d{4}-\d{2}-\d{2}) [^\]]+\] \[PAIR-RESULT\] sent_delta=(\d+) for (.+) \| (.+)$")
+cutoff = datetime.now() - timedelta(days=max(1, lookback_days))
+
+stats = {}
+with open(summary_path, "r", encoding="utf-8", errors="ignore") as f:
+    for raw in f:
+        line = raw.strip()
+        m = pattern.match(line)
+        if not m:
+            continue
+        day = datetime.strptime(m.group(1), "%Y-%m-%d")
+        if day < cutoff:
+            continue
+        sent_delta = int(m.group(2))
+        service = m.group(3).strip()
+        city = m.group(4).strip()
+        key = f"{service}|{city}"
+        acc = stats.setdefault(key, [0, 0])
+        acc[0] += sent_delta
+        acc[1] += 1
+
+scored = []
+for idx, pair in enumerate(pairs):
+    total, obs = stats.get(pair, [0, 0])
+    if obs >= max(1, min_obs):
+        avg = total / obs
+        score = avg + min(obs, 10) * 0.01
+    else:
+        score = -0.01
+    scored.append((score, idx, pair))
+
+scored.sort(key=lambda item: (-item[0], item[1]))
+print("\n".join(pair for _, _, pair in scored))
+PY
+)
+
+  if [[ -n "$ranked_output" ]]; then
+    printf "%s\n" "$ranked_output" > "$pair_file_path"
+    log "[SCHED] Pair ordering adjusted by recent yield (lookback=${PAIR_YIELD_LOOKBACK_DAYS}d, min_obs=${PAIR_YIELD_MIN_OBS})." | tee -a "$LOG_DIR/summary.log"
+  fi
+}
+
+sleep_for_next_pair() {
+  local sleep_seconds="$DELAY_BETWEEN_RUNS"
+  local reason=""
+  if [[ -n "${1:-}" ]]; then
+    reason="$1"
+    if [[ "$NO_OUTPUT_SLEEP_SECONDS" =~ ^[0-9]+$ ]]; then
+      sleep_seconds="$NO_OUTPUT_SLEEP_SECONDS"
+    fi
+  fi
+
+  if ! [[ "$sleep_seconds" =~ ^[0-9]+$ ]]; then
+    sleep_seconds="$DELAY_BETWEEN_RUNS"
+  fi
+
+  if [[ -n "$reason" ]]; then
+    log "--- Sleeping ${sleep_seconds}s (reason=$reason) ---" | tee -a "$LOG_DIR/summary.log"
+  else
+    log "--- Sleeping ${sleep_seconds}s ---" | tee -a "$LOG_DIR/summary.log"
+  fi
+  sleep "$sleep_seconds"
+}
+
 # Services ------------------------------------------------------------
 SERVICES=(
 "Plumbers" "Roofers" "Electricians" "Contractors / General Contractors"
@@ -561,6 +670,8 @@ for (( i=0; i<pair_count; i++ )); do
   printf "%s|%s\n" "${SEL_SERVICES[$i]}" "${SEL_CITIES[$i]}" >> "$PAIR_FILE"
 done
 
+reorder_pairs_by_recent_yield "$PAIR_FILE"
+
 # Reset per-run email log so summary counts reflect this run only
 : > "$LOG_DIR/email.log"
 
@@ -592,6 +703,11 @@ log "[SCHED] ADAPTIVE_PAIR_SCHEDULING=$ADAPTIVE_PAIR_SCHEDULING, lookback=$ADAPT
 log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair_base=$EXPECTED_SENDS_PER_PAIR, expected_per_pair_effective=$effective_expected_sends_per_pair, selected_pairs=$TOTAL" | tee -a "$LOG_DIR/summary.log"
 
 zero_send_streak=0
+pairs_discovery_failed=0
+pairs_enrichment_failed=0
+pairs_no_enriched_file=0
+pairs_zero_sent=0
+pairs_nonzero_sent=0
 
 if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
   log "[DISCOVERY] Parallel phase enabled (max_jobs=$PARALLEL_DISCOVERY_MAX_JOBS, stagger=${PARALLEL_DISCOVERY_STAGGER_SEC}s)" | tee -a "$LOG_DIR/summary.log"
@@ -669,7 +785,9 @@ for ((i=0; i<TOTAL; i++)); do
     discovery_status="${DISCOVERY_EXIT_CODES[$i]:-1}"
     if [[ "$discovery_status" != "0" ]]; then
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
-      sleep "$DELAY_BETWEEN_RUNS"; continue
+      pairs_discovery_failed=$((pairs_discovery_failed + 1))
+      sleep_for_next_pair "discovery_failed"
+      continue
     fi
     log "[DISCOVERY] Reusing parallel discovery output." | tee -a "$LOG_DIR/summary.log"
   else
@@ -678,7 +796,9 @@ for ((i=0; i<TOTAL; i++)); do
       step_finished_epoch="$(date +%s)"
       DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
-      sleep "$DELAY_BETWEEN_RUNS"; continue
+      pairs_discovery_failed=$((pairs_discovery_failed + 1))
+      sleep_for_next_pair "discovery_failed"
+      continue
     fi
     step_finished_epoch="$(date +%s)"
     DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
@@ -708,7 +828,9 @@ for ((i=0; i<TOTAL; i++)); do
       step_finished_epoch="$(date +%s)"
       ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
-      sleep "$DELAY_BETWEEN_RUNS"; continue
+      pairs_enrichment_failed=$((pairs_enrichment_failed + 1))
+      sleep_for_next_pair "enrichment_failed"
+      continue
     fi
   fi
   step_finished_epoch="$(date +%s)"
@@ -720,7 +842,9 @@ for ((i=0; i<TOTAL; i++)); do
   OUT_FILE="$DATA_DIR/leads_${FILE_TAG}_NO_WEBSITE_$(date +%Y-%m-%d).csv"
   if [[ "$DRY_RUN" == "false" && ! -f "$OUT_FILE" ]]; then
     log "[WARN] No enriched file found -> $OUT_FILE" | tee -a "$LOG_DIR/summary.log"
-    sleep "$DELAY_BETWEEN_RUNS"; continue
+    pairs_no_enriched_file=$((pairs_no_enriched_file + 1))
+    sleep_for_next_pair "no_enriched_file"
+    continue
   fi
 
   # Step 3: Outreach
@@ -746,9 +870,11 @@ for ((i=0; i<TOTAL; i++)); do
   if [[ "$DRY_RUN" == "false" ]]; then
     if (( pair_sent_delta <= 0 )); then
       zero_send_streak=$((zero_send_streak + 1))
+      pairs_zero_sent=$((pairs_zero_sent + 1))
       log "[PAIR-RESULT] zero_send_streak=$zero_send_streak" | tee -a "$LOG_DIR/summary.log"
     else
       zero_send_streak=0
+      pairs_nonzero_sent=$((pairs_nonzero_sent + 1))
     fi
 
     if (( ZERO_SEND_STREAK_STOP > 0 && zero_send_streak >= ZERO_SEND_STREAK_STOP )); then
@@ -757,8 +883,7 @@ for ((i=0; i<TOTAL; i++)); do
     fi
   fi
 
-  log "--- Sleeping ${DELAY_BETWEEN_RUNS}s ---" | tee -a "$LOG_DIR/summary.log"
-  sleep "$DELAY_BETWEEN_RUNS"
+  sleep_for_next_pair
 done
 
 rm -f "$PAIR_FILE"
@@ -995,26 +1120,26 @@ IFS='|' read -r \
 KPI_CSV="$LOG_DIR/daily_kpi.csv"
 if [[ -f "$KPI_CSV" ]]; then
   existing_header="$(head -n 1 "$KPI_CSV")"
-  if [[ "$existing_header" != *"google_cost_estimated_mtd"* ]]; then
+  if [[ "$existing_header" != *"google_cost_estimated_mtd"* || "$existing_header" != *"pairs_discovery_failed"* ]]; then
     mv "$KPI_CSV" "$KPI_CSV.pre_metrics_${RUN_ID}.bak"
   fi
 fi
 if [[ ! -f "$KPI_CSV" ]]; then
-  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,total_lead_files,sent_today_total,remaining_quota_end,pending_queue_end,run_duration_sec,discovery_duration_sec,enrich_duration_sec,outreach_duration_sec,api_calls_total,api_success_total,api_error_total,api_success_rate,cache_hits_total,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$KPI_CSV"
+  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,daily_target,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,total_lead_files,sent_today_total,remaining_quota_end,pending_queue_end,run_duration_sec,discovery_duration_sec,enrich_duration_sec,outreach_duration_sec,api_calls_total,api_success_total,api_error_total,api_success_rate,cache_hits_total,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar,pairs_discovery_failed,pairs_enrichment_failed,pairs_no_enriched_file,pairs_zero_sent,pairs_nonzero_sent" > "$KPI_CSV"
 fi
-echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$lead_count,$sent_today_end,$remaining_quota_end,$pending_queue_size_end,$RUN_DURATION_SEC,$DISCOVERY_DURATION_SEC,$ENRICH_DURATION_SEC,$OUTREACH_DURATION_SEC,${api_calls_total:-0},${api_success_total:-0},${api_error_total:-0},${api_success_rate:-0},${api_cache_hits_total:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$KPI_CSV"
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,$DAILY_EMAIL_TARGET,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$lead_count,$sent_today_end,$remaining_quota_end,$pending_queue_size_end,$RUN_DURATION_SEC,$DISCOVERY_DURATION_SEC,$ENRICH_DURATION_SEC,$OUTREACH_DURATION_SEC,${api_calls_total:-0},${api_success_total:-0},${api_error_total:-0},${api_success_rate:-0},${api_cache_hits_total:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0},${pairs_discovery_failed:-0},${pairs_enrichment_failed:-0},${pairs_no_enriched_file:-0},${pairs_zero_sent:-0},${pairs_nonzero_sent:-0}" >> "$KPI_CSV"
 log "[KPI] Appended daily KPI row -> $KPI_CSV" | tee -a "$LOG_DIR/summary.log"
 
 if [[ -f "$RUN_HISTORY_CSV" ]]; then
   history_header="$(head -n 1 "$RUN_HISTORY_CSV")"
-  if [[ "$history_header" != *"google_cost_estimated_mtd"* ]]; then
+  if [[ "$history_header" != *"google_cost_estimated_mtd"* || "$history_header" != *"pairs_discovery_failed"* ]]; then
     mv "$RUN_HISTORY_CSV" "$RUN_HISTORY_CSV.pre_google_cost_${RUN_ID}.bak"
   fi
 fi
 if [[ ! -f "$RUN_HISTORY_CSV" ]]; then
-  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,pending_queue_end,run_duration_sec,api_calls_total,api_success_rate,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar" > "$RUN_HISTORY_CSV"
+  echo "date,timestamp,run_id,dry_run,pairs_selected,pairs_processed,sent_in_run,replies_in_run,hard_bounces_in_run,soft_bounces_in_run,pending_queue_end,run_duration_sec,api_calls_total,api_success_rate,cache_hit_rate,emails_per_api_call,google_places_calls,google_places_text_search_calls,google_places_details_calls,serper_calls,hunter_calls,google_places_avg_latency_ms,serper_avg_latency_ms,hunter_avg_latency_ms,google_cost_estimated_run,google_cost_estimated_mtd,google_cost_estimated_monthly_projected,emails_per_google_dollar,pairs_discovery_failed,pairs_enrichment_failed,pairs_no_enriched_file,pairs_zero_sent,pairs_nonzero_sent" > "$RUN_HISTORY_CSV"
 fi
-echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$pending_queue_size_end,$RUN_DURATION_SEC,${api_calls_total:-0},${api_success_rate:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0}" >> "$RUN_HISTORY_CSV"
+echo "$(date +%Y-%m-%d),$(date '+%Y-%m-%d %H:%M:%S'),$RUN_ID,$DRY_RUN,$TOTAL,$COUNT,${sent_count:-0},${reply_count:-0},${hard_bounce_count:-0},${soft_bounce_count:-0},$pending_queue_size_end,$RUN_DURATION_SEC,${api_calls_total:-0},${api_success_rate:-0},${cache_hit_rate:-0},${emails_per_api_call:-0},${api_google_places_calls:-0},${api_google_places_text_search_calls:-0},${api_google_places_details_calls:-0},${api_serper_calls:-0},${api_hunter_calls:-0},${api_google_places_avg_latency_ms:-0},${api_serper_avg_latency_ms:-0},${api_hunter_avg_latency_ms:-0},${google_cost_estimated_run:-0},${google_cost_estimated_mtd:-0},${google_cost_estimated_monthly_projected:-0},${emails_per_google_dollar:-0},${pairs_discovery_failed:-0},${pairs_enrichment_failed:-0},${pairs_no_enriched_file:-0},${pairs_zero_sent:-0},${pairs_nonzero_sent:-0}" >> "$RUN_HISTORY_CSV"
 log "[KPI] Appended run metrics history row -> $RUN_HISTORY_CSV" | tee -a "$LOG_DIR/summary.log"
 
 success_alert=$(awk -v success="$api_success_rate" -v threshold="$API_SUCCESS_RATE_ALERT_THRESHOLD" 'BEGIN {print ((success + 0.0) < (threshold + 0.0)) ? 1 : 0}')
@@ -1075,6 +1200,13 @@ Replies Detected: ${reply_count:-0}
 Hard Bounces: ${hard_bounce_count:-0}
 Soft Bounces: ${soft_bounce_count:-0}
 Pending Queue End: ${pending_queue_size_end}
+
+Pair Outcomes:
+- Discovery failed: ${pairs_discovery_failed:-0}
+- Enrichment failed: ${pairs_enrichment_failed:-0}
+- Missing enriched file: ${pairs_no_enriched_file:-0}
+- Zero-send pairs: ${pairs_zero_sent:-0}
+- Nonzero-send pairs: ${pairs_nonzero_sent:-0}
 
 Durations:
 - Run: ${RUN_DURATION_SEC}s
