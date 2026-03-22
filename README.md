@@ -1,263 +1,142 @@
-# ⚡️ ZBA Digital — Local Leads Automation 🔥
+# Daily Leads Pipeline
 
-![Python](https://img.shields.io/badge/Python-3.x-blue)
-![Automation](https://img.shields.io/badge/Automation-Daily-green)
-![Email](https://img.shields.io/badge/Email-Gmail-orange)
-![APIs](https://img.shields.io/badge/APIs-Google%20Places%20%7C%20Serper%20%7C%20Hunter-purple)
-![Status](https://img.shields.io/badge/Status-Active-success)
+Local pipeline that discovers no-website leads, enriches contact emails, and sends outreach with daily caps.
 
-## 🧭 Overview
+## Pipeline Diagram
 
-ZBA Digital’s Daily Leads Pipeline automatically finds local small-business owners who don’t have modern websites, verifies their contact emails, and sends personalized cold emails with a configurable daily cap.
-
-## 🧱 End-to-End Flow
-
-- 🔍 Discover new local business leads (Google Places API (New) by default; Serper fallback)
-- ✉️ Verify emails (Hunter.io), bounded by remaining daily quota
-- 🤖 Send personalized cold emails with rotating subject lines
-- 🛑 Enforce daily send limits and suppression list checks
-- 📬 Track replies in Gmail and auto-notify you
-
-Everything runs from your local cron scheduler each morning.
-
-## 🗂 Project Structure
-
-```text
-Daily_Leads/
-├── .env                         # API keys, Gmail app password, environment variables
-│
-├── logs/                        # Log outputs
-│   ├── summary.log              # Lead generation logs (per city/service)
-│   ├── email.log                # Sent emails + detected replies
-│   ├── daily_kpi.csv            # Daily KPI snapshots per pipeline run
-│   ├── run_metrics/             # Per-run API call counters
-│   │   └── run_metrics_<timestamp>.json
-│   │   ├── send_audit_<run_id>.json
-│   │   └── send_audit_<run_id>.csv
-│   ├── pipeline.log             # Master cron execution log
-│   └── .pairs.tmp               # Auto‑generated, then removed
-│
-├── data/                        # Lead and contact data
-│   ├── leads_<city>_<service>_NO_WEBSITE_<date>.csv
-│   ├── daily_sent/              # Daily send ledgers grouped by date
-│   │   └── daily_sent_<date>.csv
-│   ├── sent_log.csv             # Prevent re‑sending to same address
-│   ├── replies.csv              # Stores detected replies
-│   ├── suppressions.csv         # Never-send list (manual + auto-suppressed)
-│   ├── cache/                   # Cached Google Places/Serper/Hunter responses (TTL-pruned)
-│   ├── pending_leads.csv        # Deferred leads queue (pending-first next run)
-│   └── archive/                 # Archived lead CSV snapshots
-│
-├── src/
-│   ├── pipeline/
-│   │   └── master_daily_pipeline.sh # 🚀 Main orchestrator (cron entry point)
-│   ├── discovery/
-│   │   └── discover_no_website_leads.py # Lead discovery (Google Places New + Serper fallback)
-│   ├── enrichment/
-│   │   └── enrich_leads.py      # Lead enrichment (Serper + Hunter)
-│   ├── outreach/
-│   │   └── send_cold_emails.py  # Outreach + reply handling
-│   ├── generate_send_audit.py   # Post-run audit (suppressed/current/fail-no-suppression lists)
-│   └── daily_summary_report.py  # Optional standalone summary mailer
-│
-├── tests/                       # Pytest suite (unit + dry-run integration)
-│
-└── .github/workflows/
-    └── tests.yml                # CI: run pytest on push/PR
-
-archive/                         # Archived legacy scripts (safe to delete later)
-    ├── auto_daily_pipeline.py
-    ├── run_pipeline.sh
-    ├── daily_report_emailer.py
-    ├── lead_generator_email.py
-    └── filter_no_website.py                               # 🔑 environment variables
+```mermaid
+flowchart TD
+    A[Cron Trigger] --> B[src/pipeline/master_daily_pipeline.sh]
+    B --> C[Discovery\nsrc/discovery/discover_no_website_leads.py]
+    C --> D[Pending Queue\ndata/current/pending_leads.csv]
+    D --> E[Enrichment\nsrc/enrichment/enrich_leads.py]
+    E --> F[Outreach\nsrc/outreach/send_cold_emails.py]
+    F --> G[Logs + KPIs\nlogs/]
+    F --> H[Runtime Data\ndata/current/]
+    B --> I[Daily Summary + Audit]
 ```
 
-## ⚙️ Environment Setup 🔧
+## Setup Instructions
 
-Create a file named `.env` in your project root directory:
-
-```env
-# Gmail credentials (use App Passwords!)
-DAILY_LEAD_EMAIL_SENDER=yourname@gmail.com
-DAILY_LEAD_EMAIL_PASS=your_app_specific_password
-REPLY_NOTIFY_TO="your_notification_address@gmail.com"
-
-# Pipeline controls
-DAILY_EMAIL_TARGET=50
-ENRICH_BUFFER_MULTIPLIER=2
-# Hard cap per pair after budget slicing (0 disables cap)
-MAX_ENRICH_LEADS_PER_PAIR=0
-EXPECTED_SENDS_PER_PAIR=5
-# When true, derive expected sends/pair from recent non-dry run history.
-ADAPTIVE_PAIR_SCHEDULING=false
-ADAPTIVE_LOOKBACK_RUNS=5
-ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR=2
-ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR=8
-# Multiply observed recent sends/pair before clamping (1.0 keeps raw average)
-ADAPTIVE_SAFETY_FACTOR=1.0
-MAX_PAIRS_PER_RUN=15
-# Stop run after N consecutive pairs with zero sends (0 disables)
-ZERO_SEND_STREAK_STOP=0
-LEAD_SCORE_THRESHOLD=2
-PRE_ENRICH_SCORE_FILTER=true
-STARTUP_PRIORITY=false
-STARTUP_SCORE_BOOST=2
-# Prefer age-based startup targeting (not tech-industry targeting)
-STARTUP_MAX_AGE_YEARS=5
-STARTUP_EXCLUDE_TECH=true
-# Optional startup hints (comma-separated)
-# STARTUP_HINT_KEYWORDS=founded,established,since,newly opened,recently opened,just launched,new business,new company
-# Optional exclusion keywords when STARTUP_EXCLUDE_TECH=true
-# STARTUP_TECH_EXCLUDE_KEYWORDS=saas,software,app,platform,ai,ml,machine learning,cloud,devops,fintech,edtech,martech
-CACHE_TTL_DAYS=7
-CACHE_MAX_MB=256
-GOOGLE_DISCOVERY_SEARCH_CALLS=4
-GOOGLE_DISCOVERY_TARGET_LEADS=12
-GOOGLE_DETAILS_FALLBACK_LIMIT=8
-LOG_ARCHIVE_RETENTION_DAYS=60
-LOG_ROTATE_MAX_MB=10
-API_SUCCESS_RATE_ALERT_THRESHOLD=90
-EFFICIENCY_MIN_EMAILS_PER_API_CALL=0.2
-
-# Google Places cost model controls (tiered estimator)
-GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000=35
-GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000=20
-# Set > 0 to trigger alert when projected month-end Google cost exceeds threshold
-GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD=150
-
-# Discovery provider (defaults to google_places when GOOGLE_PLACES_API_KEY exists)
-# DISCOVERY_PROVIDER=google_places
-
-# Sender queue/reply behavior
-BLOCK_GENERIC_INBOXES=false
-SKIP_REPLY_CHECK_CLEANUP=false
-# Optional comma-separated extra recipient domains to never send to
-# BLOCKED_RECIPIENT_DOMAINS_EXTRA=example.com,example.org
-
-# Optional footer appended to cold emails
-UNSUBSCRIBE_FOOTER="If you'd prefer not to hear from me again, reply STOP and I will remove you immediately."
-
-# API connections
-GOOGLE_PLACES_API_KEY=your_google_places_key
-SERPER_API_KEY=your_serper_key
-HUNTER_API_KEY=your_hunter_key
-```
-
-Google discovery is now configured to use Places API (New) when `GOOGLE_PLACES_API_KEY` is present. `DISCOVERY_PROVIDER` can still be forced to `serper` if needed.
-
-Cost tracking note: the pipeline now records split Google usage (`Text Search` vs `Place Details`) and computes tiered billing estimates for run cost, month-to-date cost, and projected month-end cost in both `logs/daily_kpi.csv` and `logs/run_metrics/history.csv`.
-
-🧠 Tip: If you use 2-Factor Auth with Gmail, generate an App Password here: <https://myaccount.google.com/apppasswords>
-
-## 📆 Automated Daily Schedule 🕒
-
-Example cron jobs (macOS / Linux):
+1. Create and activate your virtual environment.
 
 ```bash
-0 7 * * * /Users/alexcahn/Scripts/Daily_Leads/src/pipeline/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
+cd /Users/alexcahn/Scripts/Daily_Leads
+python3 -m venv /Users/alexcahn/Scripts/.venv
+source /Users/alexcahn/Scripts/.venv/bin/activate
 ```
 
-✅ Fully hands-off once scheduled.
+2. Install dependencies.
 
-### Dry-run (safe test mode)
+```bash
+pip install -r requirements.txt
+```
 
-Run the full control flow without API calls or sending emails:
+3. Create `.env` in the repo root and set required secrets/overrides.
+
+4. Verify config defaults in `config/config.yaml`.
+
+5. Run a safe dry-run check.
 
 ```bash
 cd /Users/alexcahn/Scripts/Daily_Leads
 DRY_RUN=true PIPELINE_DELAY_BETWEEN_RUNS=1 ./src/pipeline/master_daily_pipeline.sh
 ```
 
-### Recommended production run flags
+## Environment Variables
+
+Create `.env` with the values below. Any variable not set falls back to config/default behavior where supported.
+
+### Required Credentials
+
+- `DAILY_LEAD_EMAIL_SENDER`
+- `DAILY_LEAD_EMAIL_PASS`
+- `REPLY_NOTIFY_TO`
+- `GOOGLE_PLACES_API_KEY`
+- `SERPER_API_KEY`
+- `HUNTER_API_KEY`
+
+### Throughput and Scheduling
+
+- `DAILY_EMAIL_TARGET`
+- `ENRICH_BUFFER_MULTIPLIER`
+- `EXPECTED_SENDS_PER_PAIR`
+- `MAX_PAIRS_PER_RUN`
+- `MAX_ENRICH_LEADS_PER_PAIR`
+- `ZERO_SEND_STREAK_STOP`
+- `PIPELINE_DELAY_BETWEEN_RUNS`
+
+### Lead Quality and Targeting
+
+- `LEAD_SCORE_THRESHOLD`
+- `PRE_ENRICH_SCORE_FILTER`
+- `STARTUP_PRIORITY`
+- `STARTUP_SCORE_BOOST`
+- `STARTUP_MAX_AGE_YEARS`
+- `STARTUP_EXCLUDE_TECH`
+- `STARTUP_HINT_KEYWORDS`
+- `STARTUP_TECH_EXCLUDE_KEYWORDS`
+
+### Discovery and Enrichment Controls
+
+- `DISCOVERY_PROVIDER`
+- `GOOGLE_DISCOVERY_SEARCH_CALLS`
+- `GOOGLE_DISCOVERY_TARGET_LEADS`
+- `GOOGLE_DETAILS_FALLBACK_LIMIT`
+- `CACHE_TTL_DAYS`
+- `CACHE_MAX_MB`
+
+### Sender and Suppression Behavior
+
+- `BLOCK_GENERIC_INBOXES`
+- `BLOCKED_RECIPIENT_DOMAINS_EXTRA`
+- `SKIP_REPLY_CHECK_CLEANUP`
+- `UNSUBSCRIBE_FOOTER`
+
+### Adaptive Pairing
+
+- `ADAPTIVE_PAIR_SCHEDULING`
+- `ADAPTIVE_LOOKBACK_RUNS`
+- `ADAPTIVE_MIN_EXPECTED_SENDS_PER_PAIR`
+- `ADAPTIVE_MAX_EXPECTED_SENDS_PER_PAIR`
+- `ADAPTIVE_SAFETY_FACTOR`
+
+### Cost and Monitoring
+
+- `GOOGLE_TEXT_SEARCH_ENTERPRISE_PRICE_PER_1000`
+- `GOOGLE_PLACE_DETAILS_ENTERPRISE_PRICE_PER_1000`
+- `GOOGLE_MONTHLY_PROJECTED_COST_ALERT_THRESHOLD`
+- `API_SUCCESS_RATE_ALERT_THRESHOLD`
+- `EFFICIENCY_MIN_EMAILS_PER_API_CALL`
+- `LOG_ARCHIVE_RETENTION_DAYS`
+- `LOG_ROTATE_MAX_MB`
+- `STRUCTURED_LOGGING_ENABLED`
+
+### Runtime and Testing
+
+- `DRY_RUN`
+
+## Daily Cron Example
+
+```cron
+0 7 * * * cd /Users/alexcahn/Scripts/Daily_Leads && /Users/alexcahn/Scripts/Daily_Leads/src/pipeline/master_daily_pipeline.sh >> /Users/alexcahn/Scripts/Daily_Leads/logs/pipeline.log 2>&1
+```
+
+This runs the pipeline every day at 07:00 local time and appends output to `logs/pipeline.log`.
+
+## Run Manually
 
 ```bash
 cd /Users/alexcahn/Scripts/Daily_Leads
-DAILY_EMAIL_TARGET=50 ENRICH_BUFFER_MULTIPLIER=2 ./src/pipeline/master_daily_pipeline.sh
+./src/pipeline/master_daily_pipeline.sh
 ```
 
-Note: `master_daily_pipeline.sh` sources `.env` before scheduling/pair selection, so values like `DAILY_EMAIL_TARGET`, `EXPECTED_SENDS_PER_PAIR`, and `MAX_PAIRS_PER_RUN` are applied at startup. Inline env vars in the run command still override `.env` for that run.
-
-### Canary mode (controlled live send)
-
-Run a single-pair live canary with a slightly lower lead score threshold:
+## Tests
 
 ```bash
 cd /Users/alexcahn/Scripts/Daily_Leads
-LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1 PIPELINE_DELAY_BETWEEN_RUNS=1 ./src/pipeline/master_daily_pipeline.sh
+pytest -q
 ```
-
-Suggested 3-day ramp:
-
-- Day 1: `LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=1`
-- Day 2: `LEAD_SCORE_THRESHOLD=2 MAX_PAIRS_PER_RUN=2`
-- Day 3: keep threshold `2`, raise `DAILY_EMAIL_TARGET` only if bounce/complaint signals remain low
-
-Rollback (strict week-1 defaults for one run):
-
-```bash
-cd /Users/alexcahn/Scripts/Daily_Leads
-LEAD_SCORE_THRESHOLD=3 MAX_PAIRS_PER_RUN=10 DAILY_EMAIL_TARGET=10 ./src/pipeline/master_daily_pipeline.sh
-```
-
-## 📨 Cold Email Template
-
-```text
-Hi {{contact_name_or_there}},
-
-{{opener_line}}
-
-I help local owners like you launch professional, mobile-friendly websites that attract more calls — within 7 days.
-
-If you're curious, you can see my work at www.zbadigital.com.
-
-Is this something you’d be open to exploring for {{business}}?
-
-Best,
-Alex
-ZBA Digital
-www.zbadigital.com
-
-{{unsubscribe_footer}}
-```
-
-Current opener behavior:
-
-- Uses high-signal note snippets only (e.g., “serving since…”, “family-owned”, “licensed/insured”)
-- Avoids low-signal snippets (directory/reviews/marketplace/product-like text)
-- Falls back to a clean business-personalized line when note quality is low
-
-## 🎯 Smart Features
-
-- 💡 Dynamic tokens: `business`, `town`, `service` auto-filled per lead
-- 🎲 Rotating subject lines for A/B testing
-- 🧠 Subject-line safety: avoids `{contact_name}` templates when contact name resolves to `there`
-- 🧭 Contact-name confidence logic (supports likely first names like `morgan`, blocks handles like `jrace`/`bbooth`)
-- 🧩 Per-lead service inference from row content (name/notes/link/website) with filename fallback
-- 🏷 Brand-aware business casing from recipient domains (`ZoomInfo`, `HomeAdvisor`, `ConsumerAffairs`, `Owens Corning`, `BBB`, etc.)
-- 🧼 Idempotent town formatting (`San Jose, CA` stays stable; prevents double-comma subjects)
-- ⏳ Random send delay (1-5 seconds) for human-like pacing
-- 🎯 Daily send cap enforcement via `DAILY_EMAIL_TARGET`
-- 💸 Quota-aware enrichment to reduce API usage (`ENRICH_BUFFER_MULTIPLIER`)
-- 🧩 Per-pair enrichment quota slicing (prevents one pair from consuming full remaining budget)
-- 📊 Dynamic pair scheduling (`EXPECTED_SENDS_PER_PAIR`, `MAX_PAIRS_PER_RUN`)
-- 📉 Adaptive pair scheduling from recent run history (`ADAPTIVE_PAIR_SCHEDULING`)
-- ✅ Lead quality gate before send (`LEAD_SCORE_THRESHOLD`)
-- 🧮 Pre-enrich score floor to avoid low-probability API calls (`PRE_ENRICH_SCORE_FILTER`)
-- 🚦 Existing-website rows are skipped before enrichment API calls
-- 🧭 Directory/aggregator domains are down-scored pre-enrichment (fewer low-value lookups)
-- ♻️ Serper/Hunter cache with TTL pruning (`CACHE_TTL_DAYS`)
-- 🛑 Suppression list enforcement (`data/suppressions.csv`)
-- 📬 Unsubscribe footer support via `UNSUBSCRIBE_FOOTER`
-- 🔁 Reply tracking and notifications
-- 🗺 Google Places API (New) discovery path with Serper fallback
-- 📄 Discovery call budget control via `GOOGLE_DISCOVERY_SEARCH_CALLS`
-- 🧾 Pending queue persistence in `data/pending_leads.csv` (deferred leads only, consumed first next run)
-- 🧹 Optional post-send cleanup skip via `SKIP_REPLY_CHECK_CLEANUP=true`
-- 📈 Daily KPI snapshots written to `logs/daily_kpi.csv`
-- 🔢 Run-level API call totals (Google Places / Serper / Hunter) included in summary email
-
-## 📬 Reply Tracking & Notifications
 
 Inbound replies are automatically processed through Gmail IMAP:
 
