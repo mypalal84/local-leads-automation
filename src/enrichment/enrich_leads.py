@@ -71,6 +71,11 @@ STRUCTURED_LOGGING_ENABLED = get_config_bool(
     "logging.structured.enabled", default=True, env_var="STRUCTURED_LOGGING_ENABLED"
 )
 
+HTTP_CONNECT_TIMEOUT_SEC = 4
+HTTP_READ_TIMEOUT_SEC = 8
+HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT_SEC, HTTP_READ_TIMEOUT_SEC)
+HTTP_SESSION = requests.Session()
+
 RUN_METRICS_TEMPLATE = {
     "google_places": 0,
     "serper": 0,
@@ -358,7 +363,7 @@ def post_serper_with_retry(headers: dict, payload: dict, timeout: int = 25):
     last_exc = None
     for attempt in range(3):
         try:
-            resp = requests.post(
+            resp = HTTP_SESSION.post(
                 "https://google.serper.dev/search",
                 headers=headers,
                 json=payload,
@@ -395,7 +400,7 @@ def search_serper(query):
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
 
         def _request():
-            r = post_serper_with_retry(headers=headers, payload=payload, timeout=25)
+            r = post_serper_with_retry(headers=headers, payload=payload, timeout=HTTP_TIMEOUT)
             r.raise_for_status()
             data = r.json().get("organic", [])
             return [x.get("link") for x in data if x.get("link")]
@@ -419,7 +424,7 @@ def has_live_website(domain):
 
     for candidate in (f"https://{clean_domain}", f"http://{clean_domain}"):
         try:
-            resp = requests.get(candidate, headers=HEADERS, timeout=6, allow_redirects=True)
+            resp = HTTP_SESSION.get(candidate, headers=HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True)
             if 200 <= resp.status_code < 400:
                 content_type = (resp.headers.get("Content-Type", "") or "").lower()
                 body = (resp.text or "")[:3000]
@@ -548,9 +553,9 @@ def hunter_email_lookup(domain):
     def _call():
 
         def _request():
-            r = requests.get("https://api.hunter.io/v2/domain-search",
-                             params={"domain": domain, "api_key": HUNTER},
-                             timeout=15)
+            r = HTTP_SESSION.get("https://api.hunter.io/v2/domain-search",
+                                 params={"domain": domain, "api_key": HUNTER},
+                                 timeout=HTTP_TIMEOUT)
             r.raise_for_status()
             emails = r.json().get("data", {}).get("emails", [])
             return [e.get("value") for e in emails if e.get("value")]

@@ -20,6 +20,7 @@ import sys
 import requests
 import pandas as pd
 import traceback
+import fcntl
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
@@ -53,9 +54,19 @@ GOOGLE_DISCOVERY_SEARCH_CALLS = get_config_int("discovery.search_calls", default
 GOOGLE_DISCOVERY_TARGET_LEADS = get_config_int("discovery.target_leads", default=12, env_var="GOOGLE_DISCOVERY_TARGET_LEADS")
 GOOGLE_DETAILS_FALLBACK_LIMIT = get_config_int("discovery.details_fallback_limit", default=8, env_var="GOOGLE_DETAILS_FALLBACK_LIMIT")
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
+SERPER_DAILY_LIMIT = max(0, get_config_int("discovery.serper_daily_limit", default=0, env_var="SERPER_DAILY_LIMIT"))
 STRUCTURED_LOGGING_ENABLED = get_config_bool(
     "logging.structured.enabled", default=True, env_var="STRUCTURED_LOGGING_ENABLED"
 )
+DATESTAMP = datetime.now().strftime("%Y-%m-%d")
+
+HTTP_CONNECT_TIMEOUT_SEC = 4
+HTTP_READ_TIMEOUT_SEC = 8
+HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT_SEC, HTTP_READ_TIMEOUT_SEC)
+HTTP_SESSION = requests.Session()
+
+SERPER_BUDGET_FILE = os.path.join(BASE_DIR, "logs", "run_metrics", f"serper_daily_usage_{DATESTAMP}.json")
+os.makedirs(os.path.dirname(SERPER_BUDGET_FILE), exist_ok=True)
 
 RUN_METRICS_TEMPLATE = {
     "google_places": 0,
@@ -120,8 +131,6 @@ def archive_old_data():
         except Exception as e:
             print(f"[ARCHIVE] Could not move {name}: {e}")
     print(f"[ARCHIVE] Moved {len(files)} old data file(s) → {session_dir}")
-
-DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; ZBA-LeadBot/1.0; +https://zbadigital.com)"
@@ -356,12 +365,49 @@ def retry_request(func, *args, **kwargs):
     return None
 
 
+def reserve_serper_budget_slot() -> bool:
+    """Reserve one Serper call from daily budget. Returns False when limit is reached."""
+    if SERPER_DAILY_LIMIT <= 0:
+        return True
+
+    try:
+        with open(SERPER_BUDGET_FILE, "a+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            handle.seek(0)
+            raw = handle.read().strip()
+            payload = {"date": DATESTAMP, "count": 0}
+            if raw:
+                try:
+                    loaded = json.loads(raw)
+                    payload["date"] = str(loaded.get("date", DATESTAMP))
+                    payload["count"] = int(loaded.get("count", 0) or 0)
+                except Exception:
+                    payload = {"date": DATESTAMP, "count": 0}
+
+            if payload["date"] != DATESTAMP:
+                payload = {"date": DATESTAMP, "count": 0}
+
+            if payload["count"] >= SERPER_DAILY_LIMIT:
+                return False
+
+            payload["count"] += 1
+            handle.seek(0)
+            handle.truncate(0)
+            json.dump(payload, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+            return True
+    except Exception as exc:
+        print(f"[WARN] Serper budget file error, continuing without hard cap: {exc}")
+        return True
+
+
 def post_serper_with_retry(headers: dict, payload: dict, timeout: int = 25):
     """Call Serper with exponential backoff (1s, 3s, 9s) and explicit HTTP logging."""
     last_exc = None
     for attempt in range(3):
         try:
-            resp = requests.post(
+            resp = HTTP_SESSION.post(
                 "https://google.serper.dev/search",
                 headers=headers,
                 json=payload,
@@ -397,13 +443,17 @@ def run_serper_search(query: str):
     cached = cache_get("serper", query)
     if cached is not None:
         return cached
+
+    if not reserve_serper_budget_slot():
+        print(f"[STOP] Reached daily SERPER limit ({SERPER_DAILY_LIMIT}). Skipping query: {query}")
+        return []
     
     def _call():
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
         payload = {"q": query, "num": 10}
 
         def _request():
-            resp = post_serper_with_retry(headers=headers, payload=payload, timeout=25)
+            resp = post_serper_with_retry(headers=headers, payload=payload, timeout=HTTP_TIMEOUT)
             return resp.json().get("organic", [])
 
         return run_tracked_api_call("serper", _request)
@@ -444,11 +494,11 @@ def run_google_places_text_search(service: str, town: str):
             payload["pageToken"] = next_page_token
 
         def _request():
-            resp = requests.post(
+            resp = HTTP_SESSION.post(
                 "https://places.googleapis.com/v1/places:searchText",
                 headers=headers,
                 json=payload,
-                timeout=20,
+                timeout=HTTP_TIMEOUT,
             )
             resp.raise_for_status()
             return resp.json()
@@ -493,10 +543,10 @@ def get_google_place_details(place_id: str):
         }
 
         def _request():
-            resp = requests.get(
+            resp = HTTP_SESSION.get(
                 f"https://places.googleapis.com/v1/{place_resource}",
                 headers=headers,
-                timeout=20,
+                timeout=HTTP_TIMEOUT,
             )
             resp.raise_for_status()
             return resp.json()
@@ -544,7 +594,7 @@ def is_probably_real_website(link: str, business_name: str = "") -> bool:
     # Quick probe — is this an actual functional site?
     for candidate in (f"https://{domain}", f"http://{domain}"):
         try:
-            resp = requests.get(candidate, headers=HEADERS, timeout=6, allow_redirects=True)
+            resp = HTTP_SESSION.get(candidate, headers=HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True)
             if 200 <= resp.status_code < 400:
                 content_type = (resp.headers.get("Content-Type", "") or "").lower()
                 body = (resp.text or "")[:3000]
