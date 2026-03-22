@@ -28,7 +28,8 @@ SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-from utils.config import get_config_int
+from utils.config import get_config_bool, get_config_int
+from utils.logger import emit_structured_event
 
 # ======================================================
 # ENVIRONMENT SETUP
@@ -52,6 +53,9 @@ GOOGLE_DISCOVERY_SEARCH_CALLS = get_config_int("discovery.search_calls", default
 GOOGLE_DISCOVERY_TARGET_LEADS = get_config_int("discovery.target_leads", default=12, env_var="GOOGLE_DISCOVERY_TARGET_LEADS")
 GOOGLE_DETAILS_FALLBACK_LIMIT = get_config_int("discovery.details_fallback_limit", default=8, env_var="GOOGLE_DETAILS_FALLBACK_LIMIT")
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
+STRUCTURED_LOGGING_ENABLED = get_config_bool(
+    "logging.structured.enabled", default=True, env_var="STRUCTURED_LOGGING_ENABLED"
+)
 
 RUN_METRICS_TEMPLATE = {
     "google_places": 0,
@@ -558,6 +562,13 @@ def should_skip_non_business_result(title: str, link: str, snippet: str = "") ->
 def discover(service: str, town: str):
     """Finds local businesses without websites and saves leads to CSV."""
     try:
+        emit_structured_event(
+            "discovery_start",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            service=service,
+            city=town,
+            provider=DISCOVERY_PROVIDER,
+        )
         print(f"[DISCOVERY] {service.title()} | {town.title()} – Scanning...")
 
         # Safe filenames
@@ -592,6 +603,13 @@ def discover(service: str, town: str):
 
         if not results:
             print(f"[WARN] No discovery results for {town} | {service}")
+            emit_structured_event(
+                "discovery_no_results",
+                enabled=STRUCTURED_LOGGING_ENABLED,
+                service=service,
+                city=town,
+                provider=provider,
+            )
             return None
 
         leads = []
@@ -678,6 +696,13 @@ def discover(service: str, town: str):
                 except Exception as cleanup_err:
                     print(f"[WARN] Could not remove stale discovery file: {cleanup_err}")
             print(f"[WARN] All potential results had websites for {town} | {service}")
+            emit_structured_event(
+                "discovery_no_leads_after_filter",
+                enabled=STRUCTURED_LOGGING_ENABLED,
+                service=service,
+                city=town,
+                provider=provider,
+            )
             return None
 
         # Write safely‑named CSV
@@ -686,10 +711,26 @@ def discover(service: str, town: str):
         valid_emails = df['email'].notna().sum() if 'email' in df.columns else 0
         print(f"[STATS] Leads discovered: {len(df)} | Emails found: {valid_emails}")
         print(f"[OK] Discovery complete – {len(df)} leads saved → {out_path}")
+        emit_structured_event(
+            "discovery_complete",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            service=service,
+            city=town,
+            provider=provider,
+            leads_discovered=int(len(df)),
+            output_file=out_path,
+        )
         return out_path
 
     except Exception as e:
         print(f"[ERROR] Discovery error for {service} | {town}: {e}")
+        emit_structured_event(
+            "discovery_error",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            service=service,
+            city=town,
+            error=str(e),
+        )
         traceback.print_exc()
         return None
 

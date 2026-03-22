@@ -27,3 +27,7 @@ outreach:
   daily_email_target: 50
   max_emails_per_domain: 2
   pre_send_validate_emails: true
+
+logging:
+  structured:
+    enabled: true

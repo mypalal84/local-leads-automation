@@ -32,6 +32,7 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from utils.config import get_config_bool, get_config_int
+from utils.logger import emit_structured_event
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 EMAIL_ADDR = os.getenv("DAILY_LEAD_EMAIL_SENDER")
@@ -80,6 +81,9 @@ BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower
 ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "true").strip().lower() in {"1", "true", "yes", "on"}
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}
 SKIP_REPLY_CHECK_CLEANUP = os.getenv("SKIP_REPLY_CHECK_CLEANUP", "false").strip().lower() in {"1", "true", "yes", "on"}
+STRUCTURED_LOGGING_ENABLED = get_config_bool(
+    "logging.structured.enabled", default=True, env_var="STRUCTURED_LOGGING_ENABLED"
+)
 HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD = max(0, int(os.getenv("HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD", "0")))
 AUTO_SUPPRESS_UNKNOWN_BOUNCES = os.getenv("AUTO_SUPPRESS_UNKNOWN_BOUNCES", "false").strip().lower() in {"1", "true", "yes", "on"}
 SUPPRESSION_EXEMPT_EMAILS = {
@@ -1194,6 +1198,11 @@ def send_cold_emails(csv_file=None):
 
     if remaining_quota <= 0:
         print(f"[INFO] Daily cap reached ({DAILY_EMAIL_TARGET}/{DAILY_EMAIL_TARGET}). Skipping send.")
+        emit_structured_event(
+            "outreach_skipped_daily_cap",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            daily_email_target=DAILY_EMAIL_TARGET,
+        )
         return
 
     csv_file = csv_file or find_latest_verified_file()
@@ -1220,6 +1229,17 @@ def send_cold_emails(csv_file=None):
         )
     if DRY_RUN:
         print("[INFO] Sender DRY_RUN enabled: previewing emails without SMTP send.")
+
+    emit_structured_event(
+        "outreach_start",
+        enabled=STRUCTURED_LOGGING_ENABLED,
+        csv_file=csv_file,
+        town=town,
+        service=service,
+        daily_email_target=DAILY_EMAIL_TARGET,
+        remaining_quota=remaining_quota,
+        dry_run=DRY_RUN,
+    )
 
     current_rows = []
     with open(csv_file, newline="", encoding="utf-8") as csvfile:
@@ -1405,6 +1425,14 @@ def send_cold_emails(csv_file=None):
         print(f"[PENDING] Saved {len(deduped_pending)} lead(s) for future runs.")
 
     print("[INFO] Outbound cold-email batch finished.\n")
+    emit_structured_event(
+        "outreach_complete",
+        enabled=STRUCTURED_LOGGING_ENABLED,
+        csv_file=csv_file,
+        dry_run=DRY_RUN,
+        remaining_quota=remaining_quota,
+        pending_saved=0 if DRY_RUN else len(carryover_rows),
+    )
     if DRY_RUN:
         print("[INFO] Sender DRY_RUN: skipping reply-check cleanup.")
         return
@@ -1517,6 +1545,11 @@ def fetch_replies():
         return replied_addresses
     except Exception as e:
         print("[ERR] Reply check failed:", e)
+        emit_structured_event(
+            "reply_check_error",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            error=str(e),
+        )
         return set()
 # --------------------------------------------------
 # NEW: Send notification email with summary

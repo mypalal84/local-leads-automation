@@ -22,6 +22,7 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from utils.config import get_config_bool, get_config_int
+from utils.logger import emit_structured_event
 
 # ======================================================
 # ENV SETUP
@@ -66,6 +67,9 @@ DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
 CACHE_MAX_MB = int(os.getenv("CACHE_MAX_MB", "256"))
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
+STRUCTURED_LOGGING_ENABLED = get_config_bool(
+    "logging.structured.enabled", default=True, env_var="STRUCTURED_LOGGING_ENABLED"
+)
 
 RUN_METRICS_TEMPLATE = {
     "google_places": 0,
@@ -610,6 +614,13 @@ def can_reach_send_threshold(row, threshold):
 # ======================================================
 def enrich(service, town, max_leads=None):
     try:
+        emit_structured_event(
+            "enrichment_start",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            service=service,
+            city=town,
+            max_leads=max_leads,
+        )
         safe_town = sanitize_for_filename(town)
         safe_service = sanitize_for_filename(service)
 
@@ -625,6 +636,13 @@ def enrich(service, town, max_leads=None):
 
         if not os.path.isfile(in_path):
             print(f"[WARN] No discovery data found → {in_path}")
+            emit_structured_event(
+                "enrichment_missing_input",
+                enabled=STRUCTURED_LOGGING_ENABLED,
+                service=service,
+                city=town,
+                input_file=in_path,
+            )
             return None
 
         df = pd.read_csv(in_path)
@@ -755,6 +773,12 @@ def enrich(service, town, max_leads=None):
 
         if not enriched:
             print(f"[WARN] No usable leads for {town}|{service}")
+            emit_structured_event(
+                "enrichment_no_usable_leads",
+                enabled=STRUCTURED_LOGGING_ENABLED,
+                service=service,
+                city=town,
+            )
             return None
 
         out_path = os.path.join(DATA_DIR, in_fname)
@@ -764,10 +788,28 @@ def enrich(service, town, max_leads=None):
         print(f"   ↳ Skipped (business had site): {skipped_site}")
         print(f"   ↳ Skipped (pre‑enrich score floor): {skipped_score_floor}")
         print(f"   ↳ With verified emails: {found_emails}")
+        emit_structured_event(
+            "enrichment_complete",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            service=service,
+            city=town,
+            total_rows=int(len(enriched)),
+            skipped_site=int(skipped_site),
+            skipped_score_floor=int(skipped_score_floor),
+            verified_email_rows=int(found_emails),
+            output_file=out_path,
+        )
         return out_path
 
     except Exception as e:
         print(f"[❌] Fatal error during enrichment: {e}")
+        emit_structured_event(
+            "enrichment_error",
+            enabled=STRUCTURED_LOGGING_ENABLED,
+            service=service,
+            city=town,
+            error=str(e),
+        )
         traceback.print_exc()
         return None
 
