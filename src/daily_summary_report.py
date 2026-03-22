@@ -9,7 +9,7 @@ email (no attachments).
 ------------------------------------------------------
 """
 
-import os, glob, smtplib, pandas as pd
+import os, glob, smtplib, time, pandas as pd
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from datetime import datetime
@@ -66,9 +66,22 @@ def send_summary_email(body):
     msg["Subject"] = f"ZBA Digital Daily Lead Summary — {TODAY}"
     msg["From"], msg["To"] = EMAIL_FROM, EMAIL_TO
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_FROM, EMAIL_PASS)
-        server.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
+    last_exc = None
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(EMAIL_FROM, EMAIL_PASS)
+                server.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            print(f"[ERROR] SMTP summary send failed attempt {attempt + 1}/3: {exc}")
+            if attempt < 2:
+                time.sleep(3 ** attempt)
+
+    if last_exc is not None:
+        raise last_exc
 
     print("[✅] Sent summary email to", EMAIL_TO)
 

@@ -1102,7 +1102,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   log "[DRY] Skipping summary email send." | tee -a "$LOG_DIR/summary.log"
 else
 if "$PYTHON_BIN" - <<END
-import os, smtplib, ssl
+import os, smtplib, ssl, time
 from email.mime.text import MIMEText
 
 try:
@@ -1122,9 +1122,21 @@ if sender and password:
         ctx=ssl.create_default_context(cafile=certifi.where())
     else:
         ctx=ssl.create_default_context()
-    with smtplib.SMTP_SSL("smtp.gmail.com",465,context=ctx) as s:
-        s.login(sender,password)
-        s.sendmail(sender,[receiver],msg.as_string())
+    last_exc = None
+    for attempt in range(3):
+      try:
+        with smtplib.SMTP_SSL("smtp.gmail.com",465,context=ctx) as s:
+          s.login(sender,password)
+          s.sendmail(sender,[receiver],msg.as_string())
+        last_exc = None
+        break
+      except Exception as exc:
+        last_exc = exc
+        print(f"[ERROR] SMTP summary send failed attempt {attempt + 1}/3: {exc}")
+        if attempt < 2:
+          time.sleep(3 ** attempt)
+    if last_exc is not None:
+      raise last_exc
 END
   then
     log "Summary Email Sent to $REPLY_NOTIFY_TO" | tee -a "$LOG_DIR/summary.log"

@@ -1383,7 +1383,22 @@ def send_cold_emails(csv_file=None):
                 continue
 
             try:
-                server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
+                sent_ok = False
+                last_send_exc = None
+                for attempt in range(3):
+                    try:
+                        server.sendmail(EMAIL_ADDR, [email_field], msg.as_string())
+                        sent_ok = True
+                        break
+                    except Exception as send_exc:
+                        last_send_exc = send_exc
+                        print(f"[ERROR] SMTP send failed attempt {attempt + 1}/3 for {email_field}: {send_exc}")
+                        if attempt < 2:
+                            time.sleep(3 ** attempt)
+
+                if not sent_ok and last_send_exc is not None:
+                    raise last_send_exc
+
                 append_to_log(email_field, lead_score=lead_score, source_file=csv_file)
                 append_to_daily_log(email_field, lead_score=lead_score, source_file=csv_file)
                 sent.add(email_field)
@@ -1408,9 +1423,23 @@ def send_cold_emails(csv_file=None):
     if DRY_RUN:
         process_rows(server=None)
     else:
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
-            server.login(EMAIL_ADDR, EMAIL_PASS)
-            process_rows(server=server)
+        smtp_batch_ok = False
+        last_smtp_exc = None
+        for attempt in range(3):
+            try:
+                with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
+                    server.login(EMAIL_ADDR, EMAIL_PASS)
+                    process_rows(server=server)
+                smtp_batch_ok = True
+                break
+            except Exception as smtp_exc:
+                last_smtp_exc = smtp_exc
+                print(f"[ERROR] SMTP session setup/send failed attempt {attempt + 1}/3: {smtp_exc}")
+                if attempt < 2:
+                    time.sleep(3 ** attempt)
+
+        if not smtp_batch_ok and last_smtp_exc is not None:
+            raise last_smtp_exc
 
     if not DRY_RUN:
         deduped_pending = []
@@ -1582,9 +1611,23 @@ def send_reply_notifications(replied_addresses):
         msg["To"] = REPLY_NOTIFY_TO
 
         context = build_ssl_context()
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as s:
-            s.login(EMAIL_ADDR, EMAIL_PASS)
-            s.sendmail(EMAIL_ADDR, [REPLY_NOTIFY_TO], msg.as_string())
+        notify_ok = False
+        last_notify_exc = None
+        for attempt in range(3):
+            try:
+                with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as s:
+                    s.login(EMAIL_ADDR, EMAIL_PASS)
+                    s.sendmail(EMAIL_ADDR, [REPLY_NOTIFY_TO], msg.as_string())
+                notify_ok = True
+                break
+            except Exception as smtp_exc:
+                last_notify_exc = smtp_exc
+                print(f"[ERROR] SMTP reply notification failed attempt {attempt + 1}/3: {smtp_exc}")
+                if attempt < 2:
+                    time.sleep(3 ** attempt)
+
+        if not notify_ok and last_notify_exc is not None:
+            raise last_notify_exc
 
         print(f"[NOTIFY] Sent reply summary to {REPLY_NOTIFY_TO}")
     except Exception as e:

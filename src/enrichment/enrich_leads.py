@@ -352,6 +352,35 @@ def retry_request(func, *args, **kwargs):
     print("[❌] All retries failed.")
     return None
 
+
+def post_serper_with_retry(headers: dict, payload: dict, timeout: int = 25):
+    """Call Serper with exponential backoff (1s, 3s, 9s) and explicit HTTP logging."""
+    last_exc = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                "https://google.serper.dev/search",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                print(
+                    f"[ERROR] Serper non-200 response: status={resp.status_code} "
+                    f"attempt={attempt + 1}/3"
+                )
+            resp.raise_for_status()
+            return resp
+        except Exception as exc:
+            last_exc = exc
+            wait_seconds = 3 ** attempt
+            print(f"[RETRY] Serper request failed attempt {attempt + 1}/3: {exc}")
+            if attempt < 2:
+                time.sleep(wait_seconds)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Serper request failed without exception details")
+
 # ======================================================
 # BASIC SEARCH (SERPER)
 # ======================================================
@@ -366,8 +395,7 @@ def search_serper(query):
         headers = {"X-API-KEY": SERPER, "Content-Type": "application/json"}
 
         def _request():
-            r = requests.post("https://google.serper.dev/search",
-                              headers=headers, json=payload, timeout=25)
+            r = post_serper_with_retry(headers=headers, payload=payload, timeout=25)
             r.raise_for_status()
             data = r.json().get("organic", [])
             return [x.get("link") for x in data if x.get("link")]

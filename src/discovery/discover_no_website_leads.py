@@ -356,6 +356,35 @@ def retry_request(func, *args, **kwargs):
     return None
 
 
+def post_serper_with_retry(headers: dict, payload: dict, timeout: int = 25):
+    """Call Serper with exponential backoff (1s, 3s, 9s) and explicit HTTP logging."""
+    last_exc = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                "https://google.serper.dev/search",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                print(
+                    f"[ERROR] Serper non-200 response: status={resp.status_code} "
+                    f"attempt={attempt + 1}/3"
+                )
+            resp.raise_for_status()
+            return resp
+        except Exception as exc:
+            last_exc = exc
+            wait_seconds = 3 ** attempt
+            print(f"[RETRY] Serper request failed attempt {attempt + 1}/3: {exc}")
+            if attempt < 2:
+                time.sleep(wait_seconds)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Serper request failed without exception details")
+
+
 # ======================================================
 # SERPER SEARCH
 # ======================================================
@@ -374,11 +403,7 @@ def run_serper_search(query: str):
         payload = {"q": query, "num": 10}
 
         def _request():
-            resp = requests.post(
-                "https://google.serper.dev/search",
-                headers=headers, json=payload, timeout=25
-            )
-            resp.raise_for_status()
+            resp = post_serper_with_retry(headers=headers, payload=payload, timeout=25)
             return resp.json().get("organic", [])
 
         return run_tracked_api_call("serper", _request)
