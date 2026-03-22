@@ -626,6 +626,7 @@ def enrich(service, town, max_leads=None):
 
         in_fname = f"leads_{safe_town}_{safe_service}_NO_WEBSITE_{DATESTAMP}.csv"
         in_path = os.path.join(DATA_DIR, in_fname)
+        out_path = os.path.join(DATA_DIR, in_fname)
 
         if not os.path.isfile(in_path):
             legacy_fname = f"leads_{town}_{service}_NO_WEBSITE_{DATESTAMP}.csv"
@@ -644,6 +645,28 @@ def enrich(service, town, max_leads=None):
                 input_file=in_path,
             )
             return None
+
+        # Rerun protection: skip if this run's output already exists with non-empty emails.
+        if os.path.isfile(out_path):
+            try:
+                existing_df = pd.read_csv(out_path)
+                has_enriched_emails = (
+                    "emails" in existing_df.columns
+                    and existing_df["emails"].fillna("").astype(str).str.strip().ne("").any()
+                )
+                if has_enriched_emails:
+                    print(f"[SKIP] Enrichment already done for {out_path}")
+                    emit_structured_event(
+                        "enrichment_skipped_existing_output",
+                        enabled=STRUCTURED_LOGGING_ENABLED,
+                        service=service,
+                        city=town,
+                        output_file=out_path,
+                    )
+                    return out_path
+            except Exception:
+                # Fall through and run enrichment if we cannot validate existing output.
+                pass
 
         df = pd.read_csv(in_path)
         if df.empty:
@@ -781,7 +804,6 @@ def enrich(service, town, max_leads=None):
             )
             return None
 
-        out_path = os.path.join(DATA_DIR, in_fname)
         pd.DataFrame(enriched).drop_duplicates(subset=["name"]).to_csv(out_path, index=False)
 
         print(f"[✅] Saved {len(enriched)} leads → {out_path}")
