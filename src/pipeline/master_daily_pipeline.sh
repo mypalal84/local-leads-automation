@@ -84,6 +84,13 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
+# Optional centralized config layer (config/config.yaml) for non-secret tunables.
+CONFIG_RENDERER="$SRC_DIR/utils/render_config_env.py"
+if [[ -f "$CONFIG_RENDERER" ]]; then
+  # shellcheck disable=SC1090
+  source <("$PYTHON_BIN" "$CONFIG_RENDERER")
+fi
+
 if [[ -n "$OVERRIDE_DAILY_EMAIL_TARGET" ]]; then DAILY_EMAIL_TARGET="$ORIG_DAILY_EMAIL_TARGET"; fi
 if [[ -n "$OVERRIDE_ENRICH_BUFFER_MULTIPLIER" ]]; then ENRICH_BUFFER_MULTIPLIER="$ORIG_ENRICH_BUFFER_MULTIPLIER"; fi
 if [[ -n "$OVERRIDE_EXPECTED_SENDS_PER_PAIR" ]]; then EXPECTED_SENDS_PER_PAIR="$ORIG_EXPECTED_SENDS_PER_PAIR"; fi
@@ -110,6 +117,9 @@ if [[ -n "$OVERRIDE_STOP_WHEN_HUNTER_CALLS_STALL" ]]; then STOP_WHEN_HUNTER_CALL
 : "${ADAPTIVE_SAFETY_FACTOR:=1.0}"
 : "${MAX_PAIRS_PER_RUN:=15}"
 : "${ZERO_SEND_STREAK_STOP:=0}"
+: "${PARALLEL_DISCOVERY_ENABLED:=true}"
+: "${PARALLEL_DISCOVERY_MAX_JOBS:=3}"
+: "${PARALLEL_DISCOVERY_STAGGER_SEC:=3}"
 : "${PIPELINE_DELAY_BETWEEN_RUNS:=}"
 : "${LOG_ARCHIVE_RETENTION_DAYS:=60}"
 : "${DRY_RUN:=false}"
@@ -133,7 +143,16 @@ if [[ "$ADAPTIVE_PAIR_SCHEDULING" == "1" || "$ADAPTIVE_PAIR_SCHEDULING" == "true
 else
   ADAPTIVE_PAIR_SCHEDULING="false"
 fi
+if [[ "$PARALLEL_DISCOVERY_ENABLED" == "1" || "$PARALLEL_DISCOVERY_ENABLED" == "true" || "$PARALLEL_DISCOVERY_ENABLED" == "yes" ]]; then
+  PARALLEL_DISCOVERY_ENABLED="true"
+else
+  PARALLEL_DISCOVERY_ENABLED="false"
+fi
 shopt -u nocasematch
+
+if ! [[ "$PARALLEL_DISCOVERY_MAX_JOBS" =~ ^[0-9]+$ ]] || (( PARALLEL_DISCOVERY_MAX_JOBS < 1 )); then
+  PARALLEL_DISCOVERY_MAX_JOBS=1
+fi
 
 RUN_METRICS_DIR="$LOG_DIR/run_metrics"
 mkdir -p "$LOG_DIR" "$DATA_DIR" "$RUN_METRICS_DIR"
@@ -550,6 +569,15 @@ cat "$PAIR_FILE" | tee -a "$LOG_DIR/summary.log"
 TOTAL=$(wc -l < "$PAIR_FILE")
 COUNT=0
 
+declare -a PAIR_SERVICES
+declare -a PAIR_CITIES
+declare -a DISCOVERY_EXIT_CODES
+
+while IFS='|' read -r service city; do
+  PAIR_SERVICES+=("$service")
+  PAIR_CITIES+=("$city")
+done < "$PAIR_FILE"
+
 # Main loop -----------------------------------------------------------
 log "=== Starting Run ($TOTAL pairs) ===" | tee -a "$LOG_DIR/summary.log"
 cd "$SRC_DIR" || exit 1
@@ -565,7 +593,63 @@ log "[SCHED] remaining_at_start=$remaining_at_start, expected_per_pair_base=$EXP
 
 zero_send_streak=0
 
-while IFS='|' read -r service city; do
+if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
+  log "[DISCOVERY] Parallel phase enabled (max_jobs=$PARALLEL_DISCOVERY_MAX_JOBS, stagger=${PARALLEL_DISCOVERY_STAGGER_SEC}s)" | tee -a "$LOG_DIR/summary.log"
+  step_started_epoch="$(date +%s)"
+  declare -A PID_TO_INDEX
+  running_jobs=0
+
+  for ((i=0; i<TOTAL; i++)); do
+    service="${PAIR_SERVICES[$i]}"
+    city="${PAIR_CITIES[$i]}"
+    log "[DISCOVERY][QUEUE] [$((i+1))/$TOTAL] $service | $city" | tee -a "$LOG_DIR/summary.log"
+
+    while (( running_jobs >= PARALLEL_DISCOVERY_MAX_JOBS )); do
+      if wait -n -p finished_pid; then
+        wait_status=0
+      else
+        wait_status=$?
+      fi
+      finished_index="${PID_TO_INDEX[$finished_pid]:-}"
+      if [[ -n "$finished_index" ]]; then
+        DISCOVERY_EXIT_CODES[$finished_index]="$wait_status"
+      fi
+      running_jobs=$((running_jobs - 1))
+    done
+
+    (
+      "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1
+    ) &
+    pid=$!
+    PID_TO_INDEX[$pid]="$i"
+    running_jobs=$((running_jobs + 1))
+    sleep "$PARALLEL_DISCOVERY_STAGGER_SEC"
+  done
+
+  while (( running_jobs > 0 )); do
+    if wait -n -p finished_pid; then
+      wait_status=0
+    else
+      wait_status=$?
+    fi
+    finished_index="${PID_TO_INDEX[$finished_pid]:-}"
+    if [[ -n "$finished_index" ]]; then
+      DISCOVERY_EXIT_CODES[$finished_index]="$wait_status"
+    fi
+    running_jobs=$((running_jobs - 1))
+  done
+
+  step_finished_epoch="$(date +%s)"
+  DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
+else
+  if [[ "$DRY_RUN" == "false" ]]; then
+    log "[DISCOVERY] Parallel phase disabled; discovery will run per pair." | tee -a "$LOG_DIR/summary.log"
+  fi
+fi
+
+for ((i=0; i<TOTAL; i++)); do
+  service="${PAIR_SERVICES[$i]}"
+  city="${PAIR_CITIES[$i]}"
   sent_today=$(today_sent_count)
   remaining_quota=$((DAILY_EMAIL_TARGET - sent_today))
   if (( remaining_quota <= 0 )); then
@@ -579,19 +663,26 @@ while IFS='|' read -r service city; do
 
   # Step 1: Discovery
   log "[DISCOVERY] Finding leads without websites -> $service | $city" | tee -a "$LOG_DIR/summary.log"
-  step_started_epoch="$(date +%s)"
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping discovery command." | tee -a "$LOG_DIR/summary.log"
+  elif [[ "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
+    discovery_status="${DISCOVERY_EXIT_CODES[$i]:-1}"
+    if [[ "$discovery_status" != "0" ]]; then
+      log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
+      sleep "$DELAY_BETWEEN_RUNS"; continue
+    fi
+    log "[DISCOVERY] Reusing parallel discovery output." | tee -a "$LOG_DIR/summary.log"
   else
+    step_started_epoch="$(date +%s)"
     if ! "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
       step_finished_epoch="$(date +%s)"
       DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
       sleep "$DELAY_BETWEEN_RUNS"; continue
     fi
+    step_finished_epoch="$(date +%s)"
+    DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
   fi
-  step_finished_epoch="$(date +%s)"
-  DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
 
   # Step 2: Enrichment
   log "[INFO] Enriching leads for $service | $city" | tee -a "$LOG_DIR/summary.log"
@@ -668,7 +759,7 @@ while IFS='|' read -r service city; do
 
   log "--- Sleeping ${DELAY_BETWEEN_RUNS}s ---" | tee -a "$LOG_DIR/summary.log"
   sleep "$DELAY_BETWEEN_RUNS"
-done < "$PAIR_FILE"
+done
 
 rm -f "$PAIR_FILE"
 

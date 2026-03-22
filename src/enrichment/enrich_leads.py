@@ -12,9 +12,16 @@ Purpose:
 """
 
 import os, re, time, json, hashlib, requests, pandas as pd, traceback
+import sys
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+
+SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from utils.config import get_config_bool, get_config_int
 
 # ======================================================
 # ENV SETUP
@@ -23,8 +30,8 @@ load_dotenv()
 SERPER = os.getenv("SERPER_API_KEY")
 HUNTER = os.getenv("HUNTER_API_KEY")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
-LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
-PRE_ENRICH_SCORE_FILTER = os.getenv("PRE_ENRICH_SCORE_FILTER", "true").strip().lower() in {"1", "true", "yes", "on"}
+LEAD_SCORE_THRESHOLD = get_config_int("enrichment.lead_score_threshold", default=2, env_var="LEAD_SCORE_THRESHOLD")
+PRE_ENRICH_SCORE_FILTER = get_config_bool("enrichment.pre_enrich_score_filter", default=True, env_var="PRE_ENRICH_SCORE_FILTER")
 STARTUP_PRIORITY = os.getenv("STARTUP_PRIORITY", "false").strip().lower() in {"1", "true", "yes", "on"}
 STARTUP_SCORE_BOOST = int(os.getenv("STARTUP_SCORE_BOOST", "2"))
 STARTUP_MAX_AGE_YEARS = int(os.getenv("STARTUP_MAX_AGE_YEARS", "5"))

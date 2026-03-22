@@ -27,6 +27,12 @@ except Exception:
 # Load environment variables
 # --------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SRC_DIR = os.path.join(BASE_DIR, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from utils.config import get_config_bool, get_config_int
+
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 EMAIL_ADDR = os.getenv("DAILY_LEAD_EMAIL_SENDER")
 EMAIL_PASS = os.getenv("DAILY_LEAD_EMAIL_PASS")
@@ -44,8 +50,8 @@ SUPPRESSIONS_FILE = os.path.join(DATA_DIR, "suppressions.csv")
 PENDING_LEADS_FILE = os.getenv("PENDING_LEADS_FILE", "")
 PROCESSED_REPLY_IDS_FILE = os.path.join(DATA_DIR, "processed_reply_message_ids.csv")
 REPLY_NOTIFY_TO = os.getenv("REPLY_NOTIFY_TO", EMAIL_ADDR)
-DAILY_EMAIL_TARGET = int(os.getenv("DAILY_EMAIL_TARGET", "50"))
-LEAD_SCORE_THRESHOLD = int(os.getenv("LEAD_SCORE_THRESHOLD", "2"))
+DAILY_EMAIL_TARGET = get_config_int("outreach.daily_email_target", default=50, env_var="DAILY_EMAIL_TARGET")
+LEAD_SCORE_THRESHOLD = get_config_int("enrichment.lead_score_threshold", default=2, env_var="LEAD_SCORE_THRESHOLD")
 STARTUP_PRIORITY = os.getenv("STARTUP_PRIORITY", "false").strip().lower() in {"1", "true", "yes", "on"}
 STARTUP_SCORE_BOOST = int(os.getenv("STARTUP_SCORE_BOOST", "2"))
 STARTUP_MAX_AGE_YEARS = int(os.getenv("STARTUP_MAX_AGE_YEARS", "5"))
@@ -66,10 +72,10 @@ STARTUP_TECH_EXCLUDE_KEYWORDS = tuple(
     ).split(",")
     if token.strip()
 )
-PRE_SEND_VALIDATE_EMAILS = os.getenv("PRE_SEND_VALIDATE_EMAILS", "true").strip().lower() in {"1", "true", "yes", "on"}
+PRE_SEND_VALIDATE_EMAILS = get_config_bool("outreach.pre_send_validate_emails", default=True, env_var="PRE_SEND_VALIDATE_EMAILS")
 PRE_SEND_WEBSITE_GUARD = os.getenv("PRE_SEND_WEBSITE_GUARD", "false").strip().lower() in {"1", "true", "yes", "on"}
 WEBSITE_GUARD_TIMEOUT_SECONDS = max(1.0, float(os.getenv("WEBSITE_GUARD_TIMEOUT_SECONDS", "4")))
-MAX_EMAILS_PER_DOMAIN = int(os.getenv("MAX_EMAILS_PER_DOMAIN", "2"))
+MAX_EMAILS_PER_DOMAIN = get_config_int("outreach.max_emails_per_domain", default=2, env_var="MAX_EMAILS_PER_DOMAIN")
 BLOCK_GENERIC_INBOXES = os.getenv("BLOCK_GENERIC_INBOXES", "true").strip().lower() in {"1", "true", "yes", "on"}
 ALLOW_INFO_INBOX_WHEN_BUSINESS = os.getenv("ALLOW_INFO_INBOX_WHEN_BUSINESS", "true").strip().lower() in {"1", "true", "yes", "on"}
 DRY_RUN = os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}

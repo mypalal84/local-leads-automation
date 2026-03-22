@@ -16,12 +16,19 @@ import re
 import time
 import json
 import hashlib
+import sys
 import requests
 import pandas as pd
 import traceback
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
+
+SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from utils.config import get_config_int
 
 # ======================================================
 # ENVIRONMENT SETUP
@@ -39,11 +46,11 @@ DATA_DIR = os.path.join(DATA_ROOT_DIR, "current")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
-CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
-CACHE_MAX_MB = int(os.getenv("CACHE_MAX_MB", "256"))
-GOOGLE_DISCOVERY_SEARCH_CALLS = int(os.getenv("GOOGLE_DISCOVERY_SEARCH_CALLS", "2"))
-GOOGLE_DISCOVERY_TARGET_LEADS = int(os.getenv("GOOGLE_DISCOVERY_TARGET_LEADS", "12"))
-GOOGLE_DETAILS_FALLBACK_LIMIT = int(os.getenv("GOOGLE_DETAILS_FALLBACK_LIMIT", "8"))
+CACHE_TTL_DAYS = get_config_int("discovery.cache_ttl_days", default=7, env_var="CACHE_TTL_DAYS")
+CACHE_MAX_MB = get_config_int("discovery.cache_max_mb", default=256, env_var="CACHE_MAX_MB")
+GOOGLE_DISCOVERY_SEARCH_CALLS = get_config_int("discovery.search_calls", default=2, env_var="GOOGLE_DISCOVERY_SEARCH_CALLS")
+GOOGLE_DISCOVERY_TARGET_LEADS = get_config_int("discovery.target_leads", default=12, env_var="GOOGLE_DISCOVERY_TARGET_LEADS")
+GOOGLE_DETAILS_FALLBACK_LIMIT = get_config_int("discovery.details_fallback_limit", default=8, env_var="GOOGLE_DETAILS_FALLBACK_LIMIT")
 RUN_METRICS_FILE = os.getenv("PIPELINE_RUN_METRICS_FILE", "")
 
 RUN_METRICS_TEMPLATE = {
