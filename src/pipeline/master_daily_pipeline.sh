@@ -195,6 +195,35 @@ archive_run_metrics_files() {
   fi
 }
 
+archive_current_data_files_once() {
+  local archive_stamp="$1"
+  local archive_session_dir="$DATA_ROOT_DIR/archive/$archive_stamp"
+  local moved=0
+
+  shopt -s nullglob
+  local data_files=(
+    "$DATA_DIR"/leads_*.csv
+    "$DATA_DIR"/no_website_emails_*.csv
+  )
+  shopt -u nullglob
+
+  if (( ${#data_files[@]} == 0 )); then
+    log "[ARCHIVE] No existing data files to move."
+    return
+  fi
+
+  mkdir -p "$archive_session_dir"
+  for data_path in "${data_files[@]}"; do
+    if mv "$data_path" "$archive_session_dir/" 2>/dev/null; then
+      ((moved++))
+    fi
+  done
+
+  if (( moved > 0 )); then
+    log "[ARCHIVE] Moved $moved old data file(s) -> $archive_session_dir"
+  fi
+}
+
 prune_old_metrics_archives() {
   local retention_days="$LOG_ARCHIVE_RETENTION_DAYS"
   local archive_root="$LOG_DIR/archive"
@@ -317,6 +346,30 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 sanitize_for_filename() {
   echo "$1" | sed -E 's/[^A-Za-z0-9_]+/_/g; s/^_+//; s/_+$//'
+}
+
+restore_discovery_output_from_archive() {
+  local out_file="$1"
+  local base_name
+  base_name="$(basename "$out_file")"
+
+  if [[ -f "$out_file" ]]; then
+    return 0
+  fi
+
+  local archived_source
+  archived_source=$(find "$DATA_ROOT_DIR/archive" -type f -name "$base_name" 2>/dev/null | sort | tail -n 1)
+  if [[ -z "$archived_source" ]]; then
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$out_file")"
+  if mv "$archived_source" "$out_file" 2>/dev/null; then
+    log "[RECOVERY] Restored discovery output from archive -> $out_file" | tee -a "$LOG_DIR/summary.log"
+    return 0
+  fi
+
+  return 1
 }
 
 today_sent_count() {
@@ -708,6 +761,14 @@ pairs_enrichment_failed=0
 pairs_no_enriched_file=0
 pairs_zero_sent=0
 pairs_nonzero_sent=0
+DISCOVERY_STATUS_DIR="$LOG_DIR/.discovery_status_$RUN_ID"
+mkdir -p "$DISCOVERY_STATUS_DIR"
+declare -a DISCOVERY_STATUS_FILES
+export DISCOVERY_ARCHIVE_OLD_DATA="false"
+
+if [[ "$DRY_RUN" == "false" ]]; then
+  archive_current_data_files_once "$RUN_ID"
+fi
 
 if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
   log "[DISCOVERY] Parallel phase enabled (max_jobs=$PARALLEL_DISCOVERY_MAX_JOBS, stagger=${PARALLEL_DISCOVERY_STAGGER_SEC}s)" | tee -a "$LOG_DIR/summary.log"
@@ -718,6 +779,8 @@ if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
   for ((i=0; i<TOTAL; i++)); do
     service="${PAIR_SERVICES[$i]}"
     city="${PAIR_CITIES[$i]}"
+    status_file="$DISCOVERY_STATUS_DIR/${i}.status"
+    DISCOVERY_STATUS_FILES[$i]="$status_file"
     log "[DISCOVERY][QUEUE] [$((i+1))/$TOTAL] $service | $city" | tee -a "$LOG_DIR/summary.log"
 
     while (( running_jobs >= PARALLEL_DISCOVERY_MAX_JOBS )); do
@@ -734,7 +797,7 @@ if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
     done
 
     (
-      "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1
+      DISCOVERY_ARCHIVE_OLD_DATA="false" DISCOVERY_STATUS_FILE="$status_file" "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1
     ) &
     pid=$!
     PID_TO_INDEX[$pid]="$i"
@@ -791,8 +854,10 @@ for ((i=0; i<TOTAL; i++)); do
     fi
     log "[DISCOVERY] Reusing parallel discovery output." | tee -a "$LOG_DIR/summary.log"
   else
+    status_file="${DISCOVERY_STATUS_FILES[$i]:-$DISCOVERY_STATUS_DIR/${i}.status}"
+    DISCOVERY_STATUS_FILES[$i]="$status_file"
     step_started_epoch="$(date +%s)"
-    if ! "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+    if ! DISCOVERY_ARCHIVE_OLD_DATA="false" DISCOVERY_STATUS_FILE="$status_file" "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
       step_finished_epoch="$(date +%s)"
       DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
@@ -805,6 +870,28 @@ for ((i=0; i<TOTAL; i++)); do
   fi
 
   # Step 2: Enrichment
+  safe_city="$(sanitize_for_filename "$city")"
+  safe_service="$(sanitize_for_filename "$service")"
+  FILE_TAG="${safe_city}_${safe_service}"
+  OUT_FILE="$DATA_DIR/leads_${FILE_TAG}_NO_WEBSITE_$(date +%Y-%m-%d).csv"
+
+  if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
+    discovery_status_file="${DISCOVERY_STATUS_FILES[$i]:-}"
+    discovery_status_value=""
+    if [[ -n "$discovery_status_file" && -f "$discovery_status_file" ]]; then
+      discovery_status_value="$(grep -m1 '^status=' "$discovery_status_file" | cut -d= -f2- || true)"
+    fi
+    if [[ "$discovery_status_value" == "success" && ! -f "$OUT_FILE" ]]; then
+      log "[ERROR] Discovery output missing after successful discovery for $service | $city" | tee -a "$LOG_DIR/summary.log"
+      if ! restore_discovery_output_from_archive "$OUT_FILE"; then
+        log "[WARN] Could not recover missing discovery output -> $OUT_FILE" | tee -a "$LOG_DIR/summary.log"
+        pairs_discovery_failed=$((pairs_discovery_failed + 1))
+        sleep_for_next_pair "discovery_output_missing"
+        continue
+      fi
+    fi
+  fi
+
   log "[INFO] Enriching leads for $service | $city" | tee -a "$LOG_DIR/summary.log"
   step_started_epoch="$(date +%s)"
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -836,10 +923,6 @@ for ((i=0; i<TOTAL; i++)); do
   step_finished_epoch="$(date +%s)"
   ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
 
-  safe_city="$(sanitize_for_filename "$city")"
-  safe_service="$(sanitize_for_filename "$service")"
-  FILE_TAG="${safe_city}_${safe_service}"
-  OUT_FILE="$DATA_DIR/leads_${FILE_TAG}_NO_WEBSITE_$(date +%Y-%m-%d).csv"
   if [[ "$DRY_RUN" == "false" && ! -f "$OUT_FILE" ]]; then
     log "[WARN] No enriched file found -> $OUT_FILE" | tee -a "$LOG_DIR/summary.log"
     pairs_no_enriched_file=$((pairs_no_enriched_file + 1))

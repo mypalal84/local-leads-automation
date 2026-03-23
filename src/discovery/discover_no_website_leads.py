@@ -22,6 +22,7 @@ import pandas as pd
 import traceback
 import fcntl
 from urllib.parse import urlparse
+from pathlib import Path
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
 
@@ -131,6 +132,22 @@ def archive_old_data():
         except Exception as e:
             print(f"[ARCHIVE] Could not move {name}: {e}")
     print(f"[ARCHIVE] Moved {len(files)} old data file(s) → {session_dir}")
+
+
+def _write_discovery_status(status_file: str, status: str, service: str, city: str, output_file: str = ""):
+    """Write a small key/value status artifact for the pipeline integrity gate."""
+    if not status_file:
+        return
+    try:
+        parent = Path(status_file).parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with open(status_file, "w", encoding="utf-8") as f:
+            f.write(f"status={status}\n")
+            f.write(f"service={service}\n")
+            f.write(f"city={city}\n")
+            f.write(f"output_file={output_file}\n")
+    except Exception as exc:
+        print(f"[WARN] Could not write discovery status file {status_file}: {exc}")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; ZBA-LeadBot/1.0; +https://zbadigital.com)"
@@ -818,5 +835,16 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: python3 discover_no_website_leads.py <service> <city>")
     else:
-        archive_old_data()
-        discover(sys.argv[1], sys.argv[2])
+        service = sys.argv[1]
+        city = sys.argv[2]
+        archive_flag = os.getenv("DISCOVERY_ARCHIVE_OLD_DATA", "true").strip().lower()
+        status_file = os.getenv("DISCOVERY_STATUS_FILE", "").strip()
+
+        if archive_flag in {"1", "true", "yes"}:
+            archive_old_data()
+
+        output_file = discover(service, city)
+        if output_file:
+            _write_discovery_status(status_file, "success", service, city, output_file)
+        else:
+            _write_discovery_status(status_file, "no_output", service, city, "")
