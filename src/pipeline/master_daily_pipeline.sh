@@ -770,59 +770,48 @@ if [[ "$DRY_RUN" == "false" ]]; then
   archive_current_data_files_once "$RUN_ID"
 fi
 
+# ===========================================================
+# ROLLING DISCOVERY + ENRICHMENT/OUTREACH
+# ===========================================================
+# When parallel discovery is enabled, discovery for pair
+# N+MAX_JOBS starts as soon as pair N's discovery finishes
+# (i.e. while pair N is being enriched), keeping all
+# discovery slots busy throughout the run.
+# ===========================================================
+
+declare -a DISCOVERY_PIDS
+discovery_next_launch=0   # index of next pair whose discovery hasn't launched yet
+
+launch_discovery_for_pair() {
+  local idx="$1"
+  local svc="${PAIR_SERVICES[$idx]}"
+  local cty="${PAIR_CITIES[$idx]}"
+  local status_file="$DISCOVERY_STATUS_DIR/${idx}.status"
+  DISCOVERY_STATUS_FILES[$idx]="$status_file"
+  log "[DISCOVERY][LAUNCH] [$(( idx+1 ))/$TOTAL] $svc | $cty" | tee -a "$LOG_DIR/summary.log"
+  (
+    DISCOVERY_ARCHIVE_OLD_DATA="false" \
+    DISCOVERY_STATUS_FILE="$status_file" \
+    "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$svc" "$cty" \
+      >>"$LOG_DIR/summary.log" 2>&1
+  ) &
+  DISCOVERY_PIDS[$idx]=$!
+}
+
 if [[ "$DRY_RUN" == "false" && "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
-  log "[DISCOVERY] Parallel phase enabled (max_jobs=$PARALLEL_DISCOVERY_MAX_JOBS, stagger=${PARALLEL_DISCOVERY_STAGGER_SEC}s)" | tee -a "$LOG_DIR/summary.log"
-  step_started_epoch="$(date +%s)"
-  declare -A PID_TO_INDEX
-  running_jobs=0
-
-  for ((i=0; i<TOTAL; i++)); do
-    service="${PAIR_SERVICES[$i]}"
-    city="${PAIR_CITIES[$i]}"
-    status_file="$DISCOVERY_STATUS_DIR/${i}.status"
-    DISCOVERY_STATUS_FILES[$i]="$status_file"
-    log "[DISCOVERY][QUEUE] [$((i+1))/$TOTAL] $service | $city" | tee -a "$LOG_DIR/summary.log"
-
-    while (( running_jobs >= PARALLEL_DISCOVERY_MAX_JOBS )); do
-      if wait -n -p finished_pid; then
-        wait_status=0
-      else
-        wait_status=$?
-      fi
-      finished_index="${PID_TO_INDEX[$finished_pid]:-}"
-      if [[ -n "$finished_index" ]]; then
-        DISCOVERY_EXIT_CODES[$finished_index]="$wait_status"
-      fi
-      running_jobs=$((running_jobs - 1))
-    done
-
-    (
-      DISCOVERY_ARCHIVE_OLD_DATA="false" DISCOVERY_STATUS_FILE="$status_file" "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1
-    ) &
-    pid=$!
-    PID_TO_INDEX[$pid]="$i"
-    running_jobs=$((running_jobs + 1))
-    sleep "$PARALLEL_DISCOVERY_STAGGER_SEC"
-  done
-
-  while (( running_jobs > 0 )); do
-    if wait -n -p finished_pid; then
-      wait_status=0
-    else
-      wait_status=$?
+  log "[DISCOVERY] Rolling pipeline enabled (max_jobs=$PARALLEL_DISCOVERY_MAX_JOBS, stagger=${PARALLEL_DISCOVERY_STAGGER_SEC}s)" | tee -a "$LOG_DIR/summary.log"
+  # Pre-launch the initial batch (up to PARALLEL_DISCOVERY_MAX_JOBS).
+  # Subsequent pairs launch one-at-a-time as each pair finishes discovery.
+  while (( discovery_next_launch < TOTAL && discovery_next_launch < PARALLEL_DISCOVERY_MAX_JOBS )); do
+    launch_discovery_for_pair "$discovery_next_launch"
+    discovery_next_launch=$(( discovery_next_launch + 1 ))
+    if (( discovery_next_launch < TOTAL && discovery_next_launch < PARALLEL_DISCOVERY_MAX_JOBS )); then
+      sleep "$PARALLEL_DISCOVERY_STAGGER_SEC"
     fi
-    finished_index="${PID_TO_INDEX[$finished_pid]:-}"
-    if [[ -n "$finished_index" ]]; then
-      DISCOVERY_EXIT_CODES[$finished_index]="$wait_status"
-    fi
-    running_jobs=$((running_jobs - 1))
   done
-
-  step_finished_epoch="$(date +%s)"
-  DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
 else
   if [[ "$DRY_RUN" == "false" ]]; then
-    log "[DISCOVERY] Parallel phase disabled; discovery will run per pair." | tee -a "$LOG_DIR/summary.log"
+    log "[DISCOVERY] Parallel discovery disabled; will run per pair." | tee -a "$LOG_DIR/summary.log"
   fi
 fi
 
@@ -845,19 +834,34 @@ for ((i=0; i<TOTAL; i++)); do
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping discovery command." | tee -a "$LOG_DIR/summary.log"
   elif [[ "$PARALLEL_DISCOVERY_ENABLED" == "true" ]]; then
-    discovery_status="${DISCOVERY_EXIT_CODES[$i]:-1}"
-    if [[ "$discovery_status" != "0" ]]; then
+    # Block until this pair's discovery finishes (returns immediately if already done).
+    step_d_start="$(date +%s)"
+    wait "${DISCOVERY_PIDS[$i]}"
+    DISCOVERY_EXIT_CODES[$i]=$?
+    step_d_end="$(date +%s)"
+    DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_d_end - step_d_start))
+
+    # Immediately launch the next queued discovery so it runs during enrichment.
+    if (( discovery_next_launch < TOTAL )); then
+      launch_discovery_for_pair "$discovery_next_launch"
+      discovery_next_launch=$(( discovery_next_launch + 1 ))
+    fi
+
+    if [[ "${DISCOVERY_EXIT_CODES[$i]}" != "0" ]]; then
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
       pairs_discovery_failed=$((pairs_discovery_failed + 1))
       sleep_for_next_pair "discovery_failed"
       continue
     fi
-    log "[DISCOVERY] Reusing parallel discovery output." | tee -a "$LOG_DIR/summary.log"
+    log "[DISCOVERY] Parallel discovery output ready." | tee -a "$LOG_DIR/summary.log"
   else
+    # Serial (non-parallel) discovery path — unchanged behaviour.
     status_file="${DISCOVERY_STATUS_FILES[$i]:-$DISCOVERY_STATUS_DIR/${i}.status}"
     DISCOVERY_STATUS_FILES[$i]="$status_file"
     step_started_epoch="$(date +%s)"
-    if ! DISCOVERY_ARCHIVE_OLD_DATA="false" DISCOVERY_STATUS_FILE="$status_file" "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" >>"$LOG_DIR/summary.log" 2>&1; then
+    if ! DISCOVERY_ARCHIVE_OLD_DATA="false" DISCOVERY_STATUS_FILE="$status_file" \
+        "$PYTHON_BIN" "$SRC_DIR/discovery/discover_no_website_leads.py" "$service" "$city" \
+        >>"$LOG_DIR/summary.log" 2>&1; then
       step_finished_epoch="$(date +%s)"
       DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[WARN] Discovery failed for $service | $city" | tee -a "$LOG_DIR/summary.log"
@@ -869,7 +873,7 @@ for ((i=0; i<TOTAL; i++)); do
     DISCOVERY_DURATION_SEC=$((DISCOVERY_DURATION_SEC + step_finished_epoch - step_started_epoch))
   fi
 
-  # Step 2: Enrichment
+  # Parallel-discovery output integrity check
   safe_city="$(sanitize_for_filename "$city")"
   safe_service="$(sanitize_for_filename "$service")"
   FILE_TAG="${safe_city}_${safe_service}"
@@ -892,6 +896,7 @@ for ((i=0; i<TOTAL; i++)); do
     fi
   fi
 
+  # Step 2: Enrichment
   log "[INFO] Enriching leads for $service | $city" | tee -a "$LOG_DIR/summary.log"
   step_started_epoch="$(date +%s)"
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -911,7 +916,8 @@ for ((i=0; i<TOTAL; i++)); do
       enrich_limit=$MAX_ENRICH_LEADS_PER_PAIR
     fi
     log "[BUDGET] remaining_quota=$remaining_quota, pairs_remaining=$pairs_remaining, quota_slice=$quota_slice, enrich_limit=$enrich_limit (uncapped=$enrich_limit_uncapped)" | tee -a "$LOG_DIR/summary.log"
-    if ! "$PYTHON_BIN" "$SRC_DIR/enrichment/enrich_leads.py" "$service" "$city" "$enrich_limit" >>"$LOG_DIR/summary.log" 2>&1; then
+    if ! "$PYTHON_BIN" "$SRC_DIR/enrichment/enrich_leads.py" "$service" "$city" "$enrich_limit" \
+        >>"$LOG_DIR/summary.log" 2>&1; then
       step_finished_epoch="$(date +%s)"
       ENRICH_DURATION_SEC=$((ENRICH_DURATION_SEC + step_finished_epoch - step_started_epoch))
       log "[ERR] Enrichment failed -> skipping outreach." | tee -a "$LOG_DIR/summary.log"
@@ -937,7 +943,8 @@ for ((i=0; i<TOTAL; i++)); do
   if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY] Skipping outreach command for $OUT_FILE" | tee -a "$LOG_DIR/email.log"
   else
-    if ! "$PYTHON_BIN" "$SRC_DIR/outreach/send_cold_emails.py" "$OUT_FILE" >>"$LOG_DIR/email.log" 2>&1; then
+    if ! "$PYTHON_BIN" "$SRC_DIR/outreach/send_cold_emails.py" "$OUT_FILE" \
+        >>"$LOG_DIR/email.log" 2>&1; then
       log "[ERR] Email send failed for $service | $city" | tee -a "$LOG_DIR/email.log"
     fi
   fi
@@ -968,6 +975,7 @@ for ((i=0; i<TOTAL; i++)); do
 
   sleep_for_next_pair
 done
+
 
 rm -f "$PAIR_FILE"
 
