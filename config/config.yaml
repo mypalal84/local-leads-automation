@@ -6,14 +6,14 @@ pipeline:
   expected_sends_per_pair: 5
   max_pairs_per_run: 10
   enrich_buffer_multiplier: 2
-  max_enrich_leads_per_pair: 25
+  max_enrich_leads_per_pair: 15
   sleep_seconds: 10
   zero_send_streak_stop: 6
 
 discovery:
-  search_calls: 3
-  target_leads: 25
-  details_fallback_limit: 5
+  search_calls: 2
+  target_leads: 15
+  details_fallback_limit: 2
   cache_ttl_days: 30
   cache_max_mb: 512
   parallel:
@@ -24,7 +24,7 @@ discovery:
 enrichment:
   pre_enrich_score_filter: true
   lead_score_threshold: 2
-  hunter_max_domains_per_lead: 3
+  hunter_max_domains_per_lead: 1
 
 outreach:
   daily_email_target: 50

@@ -225,28 +225,27 @@ os.makedirs(DAILY_SENT_DIR, exist_ok=True)
 # Message templates
 # --------------------------------------------------
 SUBJECTS = [
-    "Quick question about {business}",
-    "Website for {business}?",
-    "Helping {business} get more calls online",
-    "{business} + mobile site idea",
-    "{business}: quick note",
-    "{contact_name}, quick idea for {business}",
-    "{town} lead-gen idea for {business}",
+    "{business} -- no website showing up on Google",
+    "Customers in {town} searching for you can't find you",
+    "Found {business} on Google Maps",
+    "Quick note for {business}",
+    "{contact_name} -- noticed something about {business} online",
+    "Missing out on {town} searches?",
+    "{business}: your competitors have websites",
 ]
 
 BODY_TEMPLATE = """Hi {contact_name},
 
 {opener_line}
 
-I help local owners like you launch professional, mobile‑friendly websites that attract more calls — within 7 days.
+Without a website, customers searching for {service} in {town} are going straight to your competitors. I build clean, mobile-friendly sites for local businesses -- most go live within a week.
 
 {cta_line}
 
-Is this something you’d be open to exploring for {business}?
+Would it make sense to connect this week?
 
-Best,
 Alex
-ZBA Digital
+ZBA Digital
 www.zbadigital.com
 """
 
@@ -1087,7 +1086,7 @@ def build_personalized_opener(notes, service, business=""):
 
     business_text = clean_business_name(business)
     if business_text and business_text != "your company":
-        return f"I had a quick idea for helping {business_text} turn more local searches into qualified inquiries."
+        return f"I looked up {business_text} on Google Maps and noticed there's no website linked -- that's a lot of potential customers you're missing."
 
     service_text = normalize_text_value(service).replace("/", " and ")
     service_text = re.sub(r"\s+", " ", service_text).strip().lower()
@@ -1168,7 +1167,7 @@ def clean_business_name(raw_name, recipient_email=""):
 
 
 def build_service_cta_line(service):
-    return "If you're curious, you can see my work at www.zbadigital.com."
+    return "You can see examples of my work at www.zbadigital.com -- happy to build you a free mockup."
 
 
 def build_email_body(business, town, service, contact_name="there", notes=""):

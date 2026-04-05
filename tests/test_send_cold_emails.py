@@ -589,7 +589,7 @@ def test_rendered_email_end_to_end_regression(monkeypatch):
     assert ",," not in subject
     assert body.startswith("Hi Morgan,")
     assert "Noticed trusted roofer serving Bay Area homeowners since 2008." in body
-    assert "for Bay View Roofing, Inc.?" in body
+    assert "Would it make sense to connect this week?" in body
 
 
 def test_format_town_for_copy_adds_state_comma():
@@ -635,7 +635,7 @@ def test_build_email_body_includes_personalized_opener_and_formatted_town():
     )
     assert "Hi Andy," in body
     assert "Noticed " in body
-    assert "I help local owners like you launch professional, mobile‑friendly websites" in body
+    assert "customers searching for Roofers in San Jose, CA" in body
 
 
 def test_build_personalized_opener_falls_back_for_caption_like_notes():
@@ -644,7 +644,7 @@ def test_build_personalized_opener_falls_back_for_caption_like_notes():
         "Roofers",
         business="Bay View Roofing",
     )
-    assert opener.startswith("I had a quick idea for helping Bay View Roofing")
+    assert opener.startswith("I looked up Bay View Roofing on Google Maps")
 
 
 def test_build_personalized_opener_avoids_low_signal_directory_notes():
@@ -697,7 +697,7 @@ def test_clean_business_name_brand_casing_from_domain(email_addr, expected):
 def test_build_service_cta_line_points_to_website():
     roofing_cta = sce.build_service_cta_line("Roofers")
     dental_cta = sce.build_service_cta_line("Dentists")
-    assert roofing_cta == "If you're curious, you can see my work at www.zbadigital.com."
+    assert roofing_cta == "You can see examples of my work at www.zbadigital.com -- happy to build you a free mockup."
     assert dental_cta == roofing_cta
 
 
