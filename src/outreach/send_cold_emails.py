@@ -1184,6 +1184,10 @@ def build_email_body(business, town, service, contact_name="there", notes=""):
 # Core: send emails
 # --------------------------------------------------
 def send_cold_emails(csv_file=None):
+    if os.getenv("ALLOW_WEEKEND_SEND", "").lower() not in ("1", "true") and datetime.now().weekday() >= 5:
+        print("[INFO] Weekend detected. Skipping send (Mon-Fri only).")
+        return
+
     sent = load_sent_log()
     suppressed = load_suppression_list()
     hard_bounce_blocked_domains = load_hard_bounce_domain_blocklist(HARD_BOUNCE_DOMAIN_SUPPRESS_THRESHOLD)
