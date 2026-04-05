@@ -23,6 +23,7 @@ KEY_MAP = {
     "PARALLEL_DISCOVERY_STAGGER_SEC": "discovery.parallel.stagger_seconds",
     "LEAD_SCORE_THRESHOLD": "enrichment.lead_score_threshold",
     "PRE_ENRICH_SCORE_FILTER": "enrichment.pre_enrich_score_filter",
+    "HUNTER_MAX_DOMAINS_PER_LEAD": "enrichment.hunter_max_domains_per_lead",
     "MAX_EMAILS_PER_DOMAIN": "outreach.max_emails_per_domain",
     "PRE_SEND_VALIDATE_EMAILS": "outreach.pre_send_validate_emails",
 }

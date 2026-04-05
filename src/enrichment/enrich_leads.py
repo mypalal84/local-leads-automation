@@ -13,6 +13,8 @@ Purpose:
 
 import os, re, time, json, hashlib, requests, pandas as pd, traceback
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -59,6 +61,8 @@ try:
 except Exception:
     HUNTER_MAX_DOMAINS_PER_LEAD = 1
 
+ENRICH_WORKERS = max(1, int(os.getenv("ENRICH_WORKERS", "4")))
+
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_ROOT_DIR = os.path.join(BASE_DIR, "data")
 DATA_DIR = os.path.join(DATA_ROOT_DIR, "current")
@@ -101,6 +105,8 @@ RUN_METRICS_TEMPLATE = {
 }
 
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+_METRICS_LOCK = threading.Lock()
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ZBA‑LeadBot/1.1)"}
 FREE_EMAIL_DOMAINS = {
@@ -226,13 +232,14 @@ def save_run_metrics(data):
 def increment_metric(metric_key: str, amount: int = 1):
     if not RUN_METRICS_FILE:
         return
-    try:
-        data = load_run_metrics()
-        if metric_key in data:
-            data[metric_key] += int(amount)
-            save_run_metrics(data)
-    except Exception:
-        pass
+    with _METRICS_LOCK:
+        try:
+            data = load_run_metrics()
+            if metric_key in data:
+                data[metric_key] += int(amount)
+                save_run_metrics(data)
+        except Exception:
+            pass
 
 
 def increment_api_counter(provider: str):
@@ -643,6 +650,120 @@ def can_reach_send_threshold(row, threshold):
     return pre_enrich_base_score(row) + 2 >= threshold
 
 # ======================================================
+# PER-LEAD WORKER  (called from thread pool)
+# ======================================================
+def _process_lead(row: dict, town: str, service: str):
+    """
+    Enriches a single lead.  Designed to run concurrently — all shared
+    state is either read-only or protected by _METRICS_LOCK.
+
+    Returns: (result_row, skip_entirely, skipped_site, found_email, skipped_score)
+      result_row   – enriched dict, or None when skip_entirely=True
+      skip_entirely – True → exclude this row from the output CSV
+      skipped_site  – True → increment the skipped_site counter
+      found_email   – True → increment the found_emails counter
+      skipped_score – True → increment the skipped_score_floor counter
+    """
+    website_val = row.get("website", "")
+    existing_website = (
+        "" if (website_val is None or (isinstance(website_val, float) and pd.isna(website_val)))
+        else str(website_val).strip()
+    )
+    name = str(row.get("name", "") or "").strip()
+
+    if existing_website:
+        print(f"[SKIP-API] Existing website present for {name or '(unknown)'}: {existing_website}")
+        return None, True, True, False, False
+
+    if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):
+        out = dict(row)
+        out["emails"] = ""
+        out["website"] = ""
+        if DEBUG:
+            print(f"[SCORE-FILTER] Skipping enrichment calls for {name or '(unknown)'}")
+        return out, False, False, False, True
+
+    query = (
+        f"{name} {town} {service} contact OR email "
+        f"-site:indeed.com -site:yelp.com -site:nextdoor.com -site:linkedin.com "
+        f"-site:facebook.com -site:houzz.com -site:thumbtack.com -site:angi.com "
+        f"-site:yellowpages.com -site:mapquest.com"
+    )
+    links = search_serper(query)
+    emails_found = []
+    confirmed_site = ""
+
+    candidate_domains = []
+    for link in links:
+        domain = urlparse(link).netloc.lower()
+        if not domain:
+            continue
+        domain = domain.replace("www.", "")
+
+        if is_non_business_domain(domain):
+            if DEBUG:
+                print(f"[SKIP-DOMAIN] Non-business candidate domain: {domain}")
+            continue
+
+        if is_confirmed_business_website(domain, business_name=name):
+            confirmed_site = f"http://{domain}"
+            if DEBUG:
+                print(f"[SKIP] Confirmed business website: {domain}")
+            break
+
+        if domain not in candidate_domains:
+            candidate_domains.append(domain)
+
+    if not confirmed_site and DEBUG and len(candidate_domains) > HUNTER_MAX_DOMAINS_PER_LEAD > 0:
+        print(
+            f"[HUNTER-CAP] Limiting domain checks to {HUNTER_MAX_DOMAINS_PER_LEAD} "
+            f"of {len(candidate_domains)} candidate domains"
+        )
+
+    for domain in ([] if confirmed_site else candidate_domains[:HUNTER_MAX_DOMAINS_PER_LEAD]):
+        emails = hunter_email_lookup(domain)
+        viable_emails = filter_viable_emails(emails)
+        if viable_emails:
+            email_domain = viable_emails[0].split("@", 1)[1].lower()
+            if is_confirmed_business_website(email_domain, business_name=name):
+                confirmed_site = f"http://{email_domain}"
+                if DEBUG:
+                    print(f"[SKIP] Confirmed website via email domain: {email_domain}")
+                break
+
+            if (
+                not is_non_business_domain(domain)
+                and not is_non_business_domain(email_domain)
+                and not is_placeholder_domain(domain)
+                and not is_placeholder_domain(email_domain)
+                and domains_look_equivalent(domain, email_domain)
+                and business_name_matches_domain(name, email_domain)
+            ):
+                confirmed_site = f"http://{email_domain}"
+                if DEBUG:
+                    print(f"[SKIP] Domain-match website signal: {domain} ~= {email_domain}")
+                break
+
+            emails_found = viable_emails
+            break
+
+    if confirmed_site:
+        if DEBUG:
+            print(f"[SKIP2] {confirmed_site} already live.")
+        return None, True, True, False, False
+
+    out = dict(row)
+    if emails_found:
+        out["emails"] = ", ".join(emails_found)
+        out["website"] = ""
+        return out, False, False, True, False
+    else:
+        out["emails"] = ""
+        out["website"] = ""
+        return out, False, False, False, False
+
+
+# ======================================================
 # ENRICH MAIN
 # ======================================================
 def enrich(service, town, max_leads=None):
@@ -714,118 +835,22 @@ def enrich(service, town, max_leads=None):
             df = df.head(max_leads)
 
         enriched, skipped_site, found_emails, skipped_score_floor = [], 0, 0, 0
-        print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} …")
+        print(f"[INFO] Enriching {len(df)} leads for {town.title()} – {service.title()} "
+              f"(workers={ENRICH_WORKERS}) …")
 
-        for _, row in df.iterrows():
-            website_val = row.get("website", "")
-            existing_website = "" if pd.isna(website_val) else str(website_val).strip()
-            name = str(row.get("name", "")).strip()
-
-            if existing_website:
-                skipped_site += 1
-                safe_name = name or "(unknown)"
-                print(f"[SKIP-API] Existing website present for {safe_name}: {existing_website}")
-                continue
-
-            if PRE_ENRICH_SCORE_FILTER and not can_reach_send_threshold(row, LEAD_SCORE_THRESHOLD):
-                skipped_score_floor += 1
-                row["emails"] = ""
-                row["website"] = ""
-                enriched.append(row)
-                if DEBUG:
-                    name = str(row.get("name", "")).strip() or "(unknown)"
-                    print(f"[SCORE-FILTER] Skipping enrichment calls for {name}")
-                continue
-
-            query = (
-                f"{name} {town} {service} contact OR email "
-                f"-site:indeed.com -site:yelp.com -site:nextdoor.com -site:linkedin.com "
-                f"-site:facebook.com -site:houzz.com -site:thumbtack.com -site:angi.com "
-                f"-site:yellowpages.com -site:mapquest.com"
-            )
-            links = search_serper(query)
-            emails_found = []
-            confirmed_site = ""
-
-            candidate_domains = []
-            for link in links:
-                domain = urlparse(link).netloc.lower()
-                if not domain:
-                    continue
-                domain = domain.replace("www.", "")
-
-                if is_non_business_domain(domain):
-                    if DEBUG:
-                        print(f"[SKIP-DOMAIN] Non-business candidate domain: {domain}")
-                    continue
-
-                if is_confirmed_business_website(domain, business_name=name):
-                    confirmed_site = f"http://{domain}"
-                    if DEBUG:
-                        print(f"[SKIP] Confirmed business website: {domain}")
-                    break
-
-                if domain not in candidate_domains:
-                    candidate_domains.append(domain)
-
-            if not confirmed_site and HUNTER_MAX_DOMAINS_PER_LEAD > 0:
-                if DEBUG and len(candidate_domains) > HUNTER_MAX_DOMAINS_PER_LEAD:
-                    print(
-                        f"[HUNTER-CAP] Limiting domain checks to {HUNTER_MAX_DOMAINS_PER_LEAD} "
-                        f"of {len(candidate_domains)} candidate domains"
-                    )
-
-            for domain in ([] if confirmed_site else candidate_domains[:HUNTER_MAX_DOMAINS_PER_LEAD]):
-
-                emails = hunter_email_lookup(domain)
-                viable_emails = filter_viable_emails(emails)
-                if viable_emails:
-                    # Guardrail: if the email domain itself has a live business site,
-                    # this is not a true no-website lead.
-                    email_domain = viable_emails[0].split("@", 1)[1].lower()
-                    if is_confirmed_business_website(email_domain, business_name=name):
-                        confirmed_site = f"http://{email_domain}"
-                        if DEBUG:
-                            print(f"[SKIP] Confirmed website via email domain: {email_domain}")
-                        break
-
-                    # Additional guardrail: when SERP already returned the same non-directory
-                    # domain as the email domain, treat it as an existing website even if
-                    # live probing is temporarily inconclusive.
-                    if (
-                        not is_non_business_domain(domain)
-                        and not is_non_business_domain(email_domain)
-                        and not is_placeholder_domain(domain)
-                        and not is_placeholder_domain(email_domain)
-                        and domains_look_equivalent(domain, email_domain)
-                        and business_name_matches_domain(name, email_domain)
-                    ):
-                        confirmed_site = f"http://{email_domain}"
-                        if DEBUG:
-                            print(f"[SKIP] Domain-match website signal: {domain} ~= {email_domain}")
-                        break
-
-                    emails_found = viable_emails
-                    break
-
-            if confirmed_site:
-                skipped_site += 1
-                if DEBUG:
-                    print(f"[SKIP2] {confirmed_site} already live.")
-                continue
-
-            if emails_found:
-                found_emails += 1
-                row["emails"] = ", ".join(emails_found)
-                row["website"] = ""
-                enriched.append(row)
-            else:
-                # keep if truly no site/email found (potential cold)
-                row["emails"] = ""
-                row["website"] = ""
-                enriched.append(row)
-
-            time.sleep(1)
+        rows = [r.to_dict() for _, r in df.iterrows()]
+        with ThreadPoolExecutor(max_workers=ENRICH_WORKERS) as pool:
+            futures = [pool.submit(_process_lead, row, town, service) for row in rows]
+            for future in as_completed(futures):
+                result_row, skip_entirely, s_site, f_email, s_score = future.result()
+                if s_site:
+                    skipped_site += 1
+                if f_email:
+                    found_emails += 1
+                if s_score:
+                    skipped_score_floor += 1
+                if not skip_entirely and result_row is not None:
+                    enriched.append(result_row)
 
         if not enriched:
             print(f"[WARN] No usable leads for {town}|{service}")
