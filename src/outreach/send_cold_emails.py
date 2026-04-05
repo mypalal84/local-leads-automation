@@ -105,10 +105,7 @@ SUPPRESSION_EXEMPT_EMAILS.update(
 )
 INTERNAL_REPLY_IGNORE_EMAILS = set(SUPPRESSION_EXEMPT_EMAILS)
 PIPELINE_NOTIFICATION_SUBJECT_PREFIX = "[pipeline]"
-UNSUBSCRIBE_FOOTER = os.getenv(
-    "UNSUBSCRIBE_FOOTER",
-    "If this isn't relevant, reply STOP and I'll remove you from future emails.",
-)
+UNSUBSCRIBE_FOOTER = os.getenv("UNSUBSCRIBE_FOOTER", "")
 TODAY_STAMP = datetime.now().strftime('%Y-%m-%d')
 DAILY_SENT_LOG = os.path.join(DAILY_SENT_DIR, f"daily_sent_{TODAY_STAMP}.csv")
 LEGACY_DAILY_SENT_LOG = os.path.join(DATA_DIR, f"daily_sent_{TODAY_STAMP}.csv")
@@ -1167,9 +1164,7 @@ def clean_business_name(raw_name, recipient_email=""):
 
 
 def build_service_cta_line(service):
-    slug = re.sub(r"[^a-z0-9]+", "-", (service or "local").strip().lower()).strip("-")
-    url = f"https://www.zbadigital.com?utm_source=email&utm_medium=cold-outreach&utm_campaign=local-leads&utm_content={slug}"
-    return f"You can see examples of my work at {url} -- happy to build you a free mockup."
+    return "You can see examples of my work at zbadigital.com/work -- happy to build you a free mockup."
 
 
 def build_email_body(business, town, service, contact_name="there", notes=""):
