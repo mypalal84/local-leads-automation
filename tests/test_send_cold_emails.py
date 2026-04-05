@@ -697,8 +697,11 @@ def test_clean_business_name_brand_casing_from_domain(email_addr, expected):
 def test_build_service_cta_line_points_to_website():
     roofing_cta = sce.build_service_cta_line("Roofers")
     dental_cta = sce.build_service_cta_line("Dentists")
-    assert roofing_cta == "You can see examples of my work at www.zbadigital.com -- happy to build you a free mockup."
-    assert dental_cta == roofing_cta
+    assert "https://www.zbadigital.com" in roofing_cta
+    assert "utm_source=email" in roofing_cta
+    assert "utm_content=roofers" in roofing_cta
+    assert "free mockup" in roofing_cta
+    assert "utm_content=dentists" in dental_cta
 
 
 def test_domain_cap_limits_sends_per_domain(tmp_path, monkeypatch):

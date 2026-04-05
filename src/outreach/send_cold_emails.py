@@ -1167,7 +1167,9 @@ def clean_business_name(raw_name, recipient_email=""):
 
 
 def build_service_cta_line(service):
-    return "You can see examples of my work at www.zbadigital.com -- happy to build you a free mockup."
+    slug = re.sub(r"[^a-z0-9]+", "-", (service or "local").strip().lower()).strip("-")
+    url = f"https://www.zbadigital.com?utm_source=email&utm_medium=cold-outreach&utm_campaign=local-leads&utm_content={slug}"
+    return f"You can see examples of my work at {url} -- happy to build you a free mockup."
 
 
 def build_email_body(business, town, service, contact_name="there", notes=""):
