@@ -14,6 +14,8 @@ discovery:
   search_calls: 3
   target_leads: 25
   details_fallback_limit: 5
+  cache_ttl_days: 30
+  cache_max_mb: 512
   parallel:
     enabled: true
     max_jobs: 3

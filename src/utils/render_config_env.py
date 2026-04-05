@@ -18,6 +18,8 @@ KEY_MAP = {
     "GOOGLE_DISCOVERY_SEARCH_CALLS": "discovery.search_calls",
     "GOOGLE_DISCOVERY_TARGET_LEADS": "discovery.target_leads",
     "GOOGLE_DETAILS_FALLBACK_LIMIT": "discovery.details_fallback_limit",
+    "CACHE_TTL_DAYS": "discovery.cache_ttl_days",
+    "CACHE_MAX_MB": "discovery.cache_max_mb",
     "PARALLEL_DISCOVERY_ENABLED": "discovery.parallel.enabled",
     "PARALLEL_DISCOVERY_MAX_JOBS": "discovery.parallel.max_jobs",
     "PARALLEL_DISCOVERY_STAGGER_SEC": "discovery.parallel.stagger_seconds",
