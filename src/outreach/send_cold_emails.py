@@ -1164,7 +1164,7 @@ def clean_business_name(raw_name, recipient_email=""):
 
 
 def build_service_cta_line(service):
-    return "You can see examples of my work at zbadigital.com/portfolio -- happy to build you a free mockup."
+    return "You can see examples of my work at zbadigital.com/portfolio."
 
 
 def build_email_body(business, town, service, contact_name="there", notes=""):
