@@ -568,15 +568,15 @@ def test_enrich_limits_scrape_lookups_per_lead_to_two_by_default(tmp_path, monke
 
     scrape_calls = {"count": 0}
 
-    def fake_scrape(_domain):
+    def fake_scrape(_url):
         scrape_calls["count"] += 1
         return []
 
-    monkeypatch.setattr(enrich_mod, "scrape_emails_from_website", fake_scrape)
+    monkeypatch.setattr(enrich_mod, "scrape_emails_from_page", fake_scrape)
     monkeypatch.setattr(enrich_mod, "hunter_email_lookup", lambda _d: [])
     monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
 
     out_path = enrich_mod.enrich(service, town)
     assert out_path == str(in_path)
-    # 3 candidate domains but SCRAPE_MAX_DOMAINS=2 → exactly 2 scrape calls
+    # 3 candidate URLs but SCRAPE_MAX_DOMAINS=2 → exactly 2 scrape calls
     assert scrape_calls["count"] == 2

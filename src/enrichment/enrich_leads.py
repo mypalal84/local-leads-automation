@@ -582,62 +582,49 @@ def hunter_email_lookup(domain):
     return result
 
 
-_CONTACT_PATHS = ("/contact", "/contact-us", "/about", "/about-us")
 _EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
 
 
-def scrape_emails_from_website(domain: str) -> list:
-    """Fetch a business website and extract emails from the page text and mailto links."""
-    if not domain:
+def scrape_emails_from_page(url: str) -> list:
+    """Fetch a specific URL and extract emails from its text and mailto links.
+
+    Designed for third-party pages (directories, chamber listings, local news)
+    that mention a no-website business and may list their contact email.
+    """
+    if not url:
         return []
 
-    cached = cache_get("scrape", domain)
+    cached = cache_get("scrape", url)
     if cached is not None:
         return cached
 
     increment_metric("scrape_calls")
-    clean_domain = domain.lower().replace("www.", "")
-    emails_found: set = set()
     started = time.perf_counter()
     had_response = False
+    emails_found: set = set()
 
-    for scheme in ("https", "http"):
-        base = f"{scheme}://{domain}"
-        pages = [base] + [f"{base}{p}" for p in _CONTACT_PATHS]
-
-        for url in pages:
-            try:
-                resp = HTTP_SESSION.get(
-                    url, headers=HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True
-                )
-                if 200 <= resp.status_code < 300:
-                    had_response = True
-                    mailto = re.findall(
-                        r'mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})',
-                        resp.text, re.I,
-                    )
-                    plain = _EMAIL_RE.findall(resp.text)
-                    emails_found.update(e.lower() for e in mailto + plain)
-            except Exception:
-                continue
-
-        if had_response:
-            break
+    try:
+        resp = HTTP_SESSION.get(
+            url, headers=HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True
+        )
+        if 200 <= resp.status_code < 300:
+            had_response = True
+            mailto = re.findall(
+                r'mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})',
+                resp.text, re.I,
+            )
+            plain = _EMAIL_RE.findall(resp.text)
+            emails_found.update(e.lower() for e in mailto + plain)
+    except Exception:
+        pass
 
     latency_ms = int((time.perf_counter() - started) * 1000)
     increment_metric("scrape_success" if had_response else "scrape_error")
     increment_metric("scrape_latency_ms_sum", latency_ms)
     increment_metric("scrape_latency_ms_count")
 
-    # Prefer emails whose domain matches the site we scraped
-    same_domain = [
-        e for e in emails_found
-        if e.split("@", 1)[-1].lower().replace("www.", "") == clean_domain
-    ]
-    other = [e for e in emails_found if e not in same_domain]
-    result = filter_viable_emails(same_domain + other)
-
-    cache_set("scrape", domain, result)
+    result = filter_viable_emails(list(emails_found))
+    cache_set("scrape", url, result)
     return result
 
 
@@ -761,12 +748,12 @@ def _process_lead(row: dict, town: str, service: str):
     emails_found = []
     confirmed_site = ""
 
-    candidate_domains = []
+    # Separate links into: confirmed-site signals vs candidate pages to scrape
+    candidate_urls = []
     for link in links:
-        domain = urlparse(link).netloc.lower()
+        domain = urlparse(link).netloc.lower().replace("www.", "")
         if not domain:
             continue
-        domain = domain.replace("www.", "")
 
         if is_non_business_domain(domain):
             if DEBUG:
@@ -779,17 +766,18 @@ def _process_lead(row: dict, town: str, service: str):
                 print(f"[SKIP] Confirmed business website: {domain}")
             break
 
-        if domain not in candidate_domains:
-            candidate_domains.append(domain)
+        if link not in candidate_urls:
+            candidate_urls.append(link)
 
-    if not confirmed_site and DEBUG and len(candidate_domains) > SCRAPE_MAX_DOMAINS > 0:
+    if not confirmed_site and DEBUG and len(candidate_urls) > SCRAPE_MAX_DOMAINS > 0:
         print(
-            f"[SCRAPE-CAP] Limiting domain checks to {SCRAPE_MAX_DOMAINS} "
-            f"of {len(candidate_domains)} candidate domains"
+            f"[SCRAPE-CAP] Limiting page scrapes to {SCRAPE_MAX_DOMAINS} "
+            f"of {len(candidate_urls)} candidate URLs"
         )
 
-    for domain in ([] if confirmed_site else candidate_domains[:SCRAPE_MAX_DOMAINS]):
-        emails = scrape_emails_from_website(domain)
+    for url in ([] if confirmed_site else candidate_urls[:SCRAPE_MAX_DOMAINS]):
+        domain = urlparse(url).netloc.lower().replace("www.", "")
+        emails = scrape_emails_from_page(url)
         if not emails and HUNTER:
             emails = hunter_email_lookup(domain)
         viable_emails = filter_viable_emails(emails)
