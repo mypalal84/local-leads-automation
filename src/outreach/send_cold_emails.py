@@ -11,6 +11,7 @@ import os, smtplib, ssl, csv, time, random, imaplib, email, re, sys
 import requests
 from email.mime.text import MIMEText
 from email.header import decode_header
+from email.utils import formataddr, formatdate, make_msgid
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from glob import glob
@@ -37,6 +38,7 @@ from utils.logger import emit_structured_event
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 EMAIL_ADDR = os.getenv("DAILY_LEAD_EMAIL_SENDER")
 EMAIL_PASS = os.getenv("DAILY_LEAD_EMAIL_PASS")
+SENDER_NAME = os.getenv("SENDER_NAME", "Alex")
 
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
@@ -1369,7 +1371,11 @@ def send_cold_emails(csv_file=None):
             )
 
             msg = MIMEText(body, "plain", "utf-8")
-            msg["Subject"], msg["From"], msg["To"] = subject, EMAIL_ADDR, email_field
+            msg["Subject"] = subject
+            msg["From"] = formataddr((SENDER_NAME, EMAIL_ADDR))
+            msg["To"] = email_field
+            msg["Date"] = formatdate(localtime=True)
+            msg["Message-ID"] = make_msgid(domain=(EMAIL_ADDR or "").split("@")[-1])
 
             if DRY_RUN:
                 body_preview = "\n".join(body.splitlines()[:8])
