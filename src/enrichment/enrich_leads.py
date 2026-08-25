@@ -61,6 +61,7 @@ try:
 except Exception:
     HUNTER_MAX_DOMAINS_PER_LEAD = 1
 
+SCRAPE_MAX_DOMAINS = max(1, int(os.getenv("SCRAPE_MAX_DOMAINS", "2")))
 ENRICH_WORKERS = max(1, int(os.getenv("ENRICH_WORKERS", "4")))
 
 BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
@@ -102,6 +103,12 @@ RUN_METRICS_TEMPLATE = {
     "hunter_cache_hit": 0,
     "hunter_latency_ms_sum": 0,
     "hunter_latency_ms_count": 0,
+    "scrape_calls": 0,
+    "scrape_success": 0,
+    "scrape_error": 0,
+    "scrape_cache_hit": 0,
+    "scrape_latency_ms_sum": 0,
+    "scrape_latency_ms_count": 0,
 }
 
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -254,11 +261,13 @@ def metric_provider_for_cache_prefix(prefix: str) -> str:
         return "serper"
     if prefix == "hunter":
         return "hunter"
+    if prefix == "scrape":
+        return "scrape"
     return ""
 
 
 def record_api_outcome(provider: str, success: bool, latency_ms: int):
-    if provider not in {"google_places", "serper", "hunter"}:
+    if provider not in {"google_places", "serper", "hunter", "scrape"}:
         return
     increment_metric(provider)
     increment_metric(f"{provider}_calls")
@@ -573,6 +582,65 @@ def hunter_email_lookup(domain):
     return result
 
 
+_CONTACT_PATHS = ("/contact", "/contact-us", "/about", "/about-us")
+_EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+
+
+def scrape_emails_from_website(domain: str) -> list:
+    """Fetch a business website and extract emails from the page text and mailto links."""
+    if not domain:
+        return []
+
+    cached = cache_get("scrape", domain)
+    if cached is not None:
+        return cached
+
+    increment_metric("scrape_calls")
+    clean_domain = domain.lower().replace("www.", "")
+    emails_found: set = set()
+    started = time.perf_counter()
+    had_response = False
+
+    for scheme in ("https", "http"):
+        base = f"{scheme}://{domain}"
+        pages = [base] + [f"{base}{p}" for p in _CONTACT_PATHS]
+
+        for url in pages:
+            try:
+                resp = HTTP_SESSION.get(
+                    url, headers=HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True
+                )
+                if 200 <= resp.status_code < 300:
+                    had_response = True
+                    mailto = re.findall(
+                        r'mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})',
+                        resp.text, re.I,
+                    )
+                    plain = _EMAIL_RE.findall(resp.text)
+                    emails_found.update(e.lower() for e in mailto + plain)
+            except Exception:
+                continue
+
+        if had_response:
+            break
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    increment_metric("scrape_success" if had_response else "scrape_error")
+    increment_metric("scrape_latency_ms_sum", latency_ms)
+    increment_metric("scrape_latency_ms_count")
+
+    # Prefer emails whose domain matches the site we scraped
+    same_domain = [
+        e for e in emails_found
+        if e.split("@", 1)[-1].lower().replace("www.", "") == clean_domain
+    ]
+    other = [e for e in emails_found if e not in same_domain]
+    result = filter_viable_emails(same_domain + other)
+
+    cache_set("scrape", domain, result)
+    return result
+
+
 def pre_enrich_base_score(row):
     score = 0
     business_val = row.get("name", "")
@@ -714,14 +782,16 @@ def _process_lead(row: dict, town: str, service: str):
         if domain not in candidate_domains:
             candidate_domains.append(domain)
 
-    if not confirmed_site and DEBUG and len(candidate_domains) > HUNTER_MAX_DOMAINS_PER_LEAD > 0:
+    if not confirmed_site and DEBUG and len(candidate_domains) > SCRAPE_MAX_DOMAINS > 0:
         print(
-            f"[HUNTER-CAP] Limiting domain checks to {HUNTER_MAX_DOMAINS_PER_LEAD} "
+            f"[SCRAPE-CAP] Limiting domain checks to {SCRAPE_MAX_DOMAINS} "
             f"of {len(candidate_domains)} candidate domains"
         )
 
-    for domain in ([] if confirmed_site else candidate_domains[:HUNTER_MAX_DOMAINS_PER_LEAD]):
-        emails = hunter_email_lookup(domain)
+    for domain in ([] if confirmed_site else candidate_domains[:SCRAPE_MAX_DOMAINS]):
+        emails = scrape_emails_from_website(domain)
+        if not emails and HUNTER:
+            emails = hunter_email_lookup(domain)
         viable_emails = filter_viable_emails(emails)
         if viable_emails:
             email_domain = viable_emails[0].split("@", 1)[1].lower()

@@ -529,12 +529,12 @@ def test_enrich_skips_when_email_domain_has_live_website(tmp_path, monkeypatch):
     assert out_path is None
 
 
-def test_enrich_limits_hunter_lookups_per_lead_to_one_by_default(tmp_path, monkeypatch):
+def test_enrich_limits_scrape_lookups_per_lead_to_two_by_default(tmp_path, monkeypatch):
     data_dir = pathlib.Path(tmp_path)
     monkeypatch.setattr(enrich_mod, "DATA_DIR", str(data_dir))
     monkeypatch.setattr(enrich_mod, "DATESTAMP", "2026-02-26")
     monkeypatch.setattr(enrich_mod, "PRE_ENRICH_SCORE_FILTER", False)
-    monkeypatch.setattr(enrich_mod, "HUNTER_MAX_DOMAINS_PER_LEAD", 1)
+    monkeypatch.setattr(enrich_mod, "SCRAPE_MAX_DOMAINS", 2)
 
     service = "Fence Installation / Repair"
     town = "Colorado Springs, CO"
@@ -566,15 +566,17 @@ def test_enrich_limits_hunter_lookups_per_lead_to_one_by_default(tmp_path, monke
     )
     monkeypatch.setattr(enrich_mod, "has_live_website", lambda _domain: False)
 
-    hunter_calls = {"count": 0}
+    scrape_calls = {"count": 0}
 
-    def fake_hunter(_domain):
-        hunter_calls["count"] += 1
+    def fake_scrape(_domain):
+        scrape_calls["count"] += 1
         return []
 
-    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", fake_hunter)
+    monkeypatch.setattr(enrich_mod, "scrape_emails_from_website", fake_scrape)
+    monkeypatch.setattr(enrich_mod, "hunter_email_lookup", lambda _d: [])
     monkeypatch.setattr(enrich_mod.time, "sleep", lambda *_args, **_kwargs: None)
 
     out_path = enrich_mod.enrich(service, town)
     assert out_path == str(in_path)
-    assert hunter_calls["count"] == 1
+    # 3 candidate domains but SCRAPE_MAX_DOMAINS=2 → exactly 2 scrape calls
+    assert scrape_calls["count"] == 2
