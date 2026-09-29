@@ -107,6 +107,14 @@ SUPPRESSION_EXEMPT_EMAILS.update(
 )
 INTERNAL_REPLY_IGNORE_EMAILS = set(SUPPRESSION_EXEMPT_EMAILS)
 PIPELINE_NOTIFICATION_SUBJECT_PREFIX = "[pipeline]"
+_WARMUP_IGNORE_SENDER_DOMAINS = {
+    "instantly.ai",
+    *(
+        d.strip().lower()
+        for d in os.getenv("WARMUP_IGNORE_SENDER_DOMAINS", "").split(",")
+        if d.strip()
+    ),
+}
 UNSUBSCRIBE_FOOTER = os.getenv("UNSUBSCRIBE_FOOTER", "")
 TODAY_STAMP = datetime.now().strftime('%Y-%m-%d')
 DAILY_SENT_LOG = os.path.join(DAILY_SENT_DIR, f"daily_sent_{TODAY_STAMP}.csv")
@@ -602,7 +610,7 @@ def is_negative_reply_text(subject, body_text):
     return any(keyword in combined for keyword in NEGATIVE_REPLY_KEYWORDS)
 
 
-def should_ignore_reply_message(reply_email, subject):
+def should_ignore_reply_message(reply_email, subject, msg=None):
     reply_email = (reply_email or "").strip().lower()
     subject_lower = (subject or "").strip().lower()
 
@@ -611,6 +619,17 @@ def should_ignore_reply_message(reply_email, subject):
 
     if subject_lower.startswith(PIPELINE_NOTIFICATION_SUBJECT_PREFIX):
         return True
+
+    sender_domain = reply_email.split("@")[-1] if "@" in reply_email else ""
+    if sender_domain and sender_domain in _WARMUP_IGNORE_SENDER_DOMAINS:
+        return True
+
+    if msg is not None:
+        x_mailer = (msg.get("X-Mailer", "") or "").lower()
+        if "instantly" in x_mailer:
+            return True
+        if any(msg.get(h) for h in ("X-Instantly-Message-Id", "X-Instantly-Warmup")):
+            return True
 
     return False
 
@@ -1553,7 +1572,7 @@ def fetch_replies():
                     append_processed_message_id(message_id)
 
                 reply_email = extract_email_address(frm)
-                if should_ignore_reply_message(reply_email, subject):
+                if should_ignore_reply_message(reply_email, subject, msg=msg):
                     continue
                 is_negative = bool(reply_email and is_negative_reply_text(subject, body))
 

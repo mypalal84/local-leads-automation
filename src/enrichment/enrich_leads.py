@@ -115,7 +115,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 _METRICS_LOCK = threading.Lock()
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ZBA‑LeadBot/1.1)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ZBA-LeadBot/1.1)"}
 FREE_EMAIL_DOMAINS = {
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"
 }
@@ -464,6 +464,9 @@ def is_confirmed_business_website(url_or_domain: str, business_name: str = "") -
     if any(domain == d or domain.endswith(f".{d}") for d in DIRECTORY_DOMAIN_HINTS):
         return False
 
+    if domain in FREE_EMAIL_DOMAINS:
+        return False
+
     if domain.endswith(".gov") or domain.endswith(".edu"):
         return False
 
@@ -744,13 +747,18 @@ def _process_lead(row: dict, town: str, service: str):
         f"-site:facebook.com -site:houzz.com -site:thumbtack.com -site:angi.com "
         f"-site:yellowpages.com -site:mapquest.com"
     )
+    query2 = f'"{name}" "{town}" contact email'
     links = search_serper(query)
+    links2 = search_serper(query2)
     emails_found = []
     confirmed_site = ""
 
-    # Separate links into: confirmed-site signals vs candidate pages to scrape
+    # Build candidate URLs from non-directory Serper results (both queries).
+    # These leads already passed the no-website discovery filter, so we scrape
+    # all non-directory links rather than pre-checking if each domain is live
+    # (which would falsely flag directory sites as the business's own website).
     candidate_urls = []
-    for link in links:
+    for link in (links or []) + (links2 or []):
         domain = urlparse(link).netloc.lower().replace("www.", "")
         if not domain:
             continue
@@ -759,12 +767,6 @@ def _process_lead(row: dict, town: str, service: str):
             if DEBUG:
                 print(f"[SKIP-DOMAIN] Non-business candidate domain: {domain}")
             continue
-
-        if is_confirmed_business_website(domain, business_name=name):
-            confirmed_site = f"http://{domain}"
-            if DEBUG:
-                print(f"[SKIP] Confirmed business website: {domain}")
-            break
 
         if link not in candidate_urls:
             candidate_urls.append(link)
