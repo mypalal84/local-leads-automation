@@ -13,7 +13,9 @@ Purpose:
 
 import os, re, time, json, hashlib, requests, pandas as pd, traceback
 import sys
+import sqlite3
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -68,6 +70,7 @@ BASE_DIR = "/Users/alexcahn/Scripts/Daily_Leads"
 DATA_ROOT_DIR = os.path.join(BASE_DIR, "data")
 DATA_DIR = os.path.join(DATA_ROOT_DIR, "current")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
+HARVEY_DB = os.getenv("HARVEY_DB_PATH", "/Users/alexcahn/Scripts/harvey/data/harvey.db")
 DATESTAMP = datetime.now().strftime("%Y-%m-%d")
 CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
 CACHE_MAX_MB = int(os.getenv("CACHE_MAX_MB", "256"))
@@ -708,6 +711,73 @@ def can_reach_send_threshold(row, threshold):
     return pre_enrich_base_score(row) + 2 >= threshold
 
 # ======================================================
+# HARVEY INTEGRATION
+# ======================================================
+_harvey_lock = threading.Lock()
+
+def push_to_harvey(name: str, email: str, town: str, service: str, google_maps_url: str = "", address: str = ""):
+    """Insert a found lead into Harvey's SQLite DB as a company + prospect.
+    Silently skips if Harvey DB is missing or the email already exists.
+    """
+    if not HARVEY_DB or not os.path.exists(HARVEY_DB):
+        return
+    try:
+        now = datetime.utcnow().isoformat()
+        company_id = uuid.uuid4().hex[:12]
+        prospect_id = uuid.uuid4().hex[:12]
+        with _harvey_lock:
+            conn = sqlite3.connect(HARVEY_DB, timeout=10)
+            try:
+                # Skip if email already in prospects
+                exists = conn.execute(
+                    "SELECT 1 FROM prospects WHERE email = ?", (email,)
+                ).fetchone()
+                if exists:
+                    return
+
+                # Upsert company (match on name + location)
+                existing_co = conn.execute(
+                    "SELECT id FROM companies WHERE name = ? AND location = ?",
+                    (name, town),
+                ).fetchone()
+                if existing_co:
+                    company_id = existing_co[0]
+                else:
+                    conn.execute(
+                        """INSERT INTO companies
+                           (id, name, location, industry, source, source_url, notes,
+                            created_at, updated_at, tech_stack_json, signals_json)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            company_id, name, town,
+                            service.lower().replace(" ", "_"),
+                            "discover:daily_leads",
+                            google_maps_url, address,
+                            now, now, "[]", "[]",
+                        ),
+                    )
+
+                conn.execute(
+                    """INSERT INTO prospects
+                       (id, company_id, email, email_verified, source, status,
+                        company, industry, personalization_notes, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        prospect_id, company_id, email, 0,
+                        "daily_leads", "new",
+                        name, service.lower(),
+                        f"No website. Found via Google Places. Location: {town}.",
+                        now, now,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass  # Never let Harvey writes break the Daily_Leads pipeline
+
+
+# ======================================================
 # PER-LEAD WORKER  (called from thread pool)
 # ======================================================
 def _process_lead(row: dict, town: str, service: str):
@@ -816,6 +886,14 @@ def _process_lead(row: dict, town: str, service: str):
     if emails_found:
         out["emails"] = ", ".join(emails_found)
         out["website"] = ""
+        push_to_harvey(
+            name=name,
+            email=emails_found[0],
+            town=town,
+            service=service,
+            google_maps_url=row.get("link", ""),
+            address=row.get("notes", ""),
+        )
         return out, False, False, True, False
     else:
         out["emails"] = ""
