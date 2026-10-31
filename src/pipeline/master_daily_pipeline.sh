@@ -742,6 +742,20 @@ while IFS='|' read -r service city; do
   PAIR_CITIES+=("$city")
 done < "$PAIR_FILE"
 
+# Harvey heartbeat ----------------------------------------------------
+HARVEY_DIR="$HOME/Scripts/harvey"
+HARVEY_LOG="/tmp/harvey-run.log"
+if [[ -d "$HARVEY_DIR" && -f "$HARVEY_DIR/.venv/bin/harvey" ]]; then
+  if ! pgrep -f "harvey run" >/dev/null 2>&1; then
+    log "[HARVEY] Starting Harvey run loop..." | tee -a "$LOG_DIR/summary.log"
+    (cd "$HARVEY_DIR" && source .venv/bin/activate && caffeinate -i harvey run >> "$HARVEY_LOG" 2>&1) &
+    disown $!
+    log "[HARVEY] Started (PID $!, log=$HARVEY_LOG)" | tee -a "$LOG_DIR/summary.log"
+  else
+    log "[HARVEY] Already running — skipping start." | tee -a "$LOG_DIR/summary.log"
+  fi
+fi
+
 # Main loop -----------------------------------------------------------
 log "=== Starting Run ($TOTAL pairs) ===" | tee -a "$LOG_DIR/summary.log"
 cd "$SRC_DIR" || exit 1
